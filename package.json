@@ -1,0 +1,29 @@
+{
+  "name": "trak",
+  "version": "0.1.0",
+  "description": "CLI for Meta Page posts, scheduling, ads stats, and draft ad creation.",
+  "type": "module",
+  "bin": {
+    "trak": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsx src/index.ts",
+    "test": "node --test --import tsx"
+  },
+  "keywords": [
+    "facebook",
+    "meta",
+    "ads",
+    "cli"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "commander": "^14.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^24.5.2",
+    "tsx": "^4.20.5",
+    "typescript": "^5.9.2"
+  }
+}
