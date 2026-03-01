@@ -25,7 +25,7 @@ export async function metaRequest<T>(options: RequestOptions): Promise<T> {
   const token = options.accessToken ?? options.tokenStore.userAccessToken;
   if (token) {
     url.searchParams.set("access_token", token);
-    const appSecret = options.secretStore?.appSecret || process.env[options.config.appSecretEnvVar];
+    const appSecret = options.secretStore?.appSecret;
     if (appSecret) {
       url.searchParams.set("appsecret_proof", buildAppSecretProof(token, appSecret));
     }

@@ -1,10 +1,29 @@
 {
   "name": "trak",
   "version": "0.1.0",
-  "description": "CLI for Meta Page posts, scheduling, ads stats, and draft ad creation.",
+  "description": "Facebook & Meta CLI for Page posts, rich Page insights, personal post reads, and Ads insights. JSON output for AI agents and automation.",
   "type": "module",
   "bin": {
     "trak": "./dist/index.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE",
+    "skill",
+    "examples",
+    "AGENTS.md"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/peeomid/trak-social-cli.git"
+  },
+  "homepage": "https://github.com/peeomid/trak-social-cli#readme",
+  "bugs": {
+    "url": "https://github.com/peeomid/trak-social-cli/issues"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
@@ -15,11 +34,32 @@
     "facebook",
     "meta",
     "ads",
-    "cli"
+    "cli",
+    "facebook-cli",
+    "meta-ads",
+    "facebook-page",
+    "facebook-ads",
+    "social-media",
+    "social-media-cli",
+    "facebook-api",
+    "graph-api",
+    "meta-marketing-api",
+    "facebook-analytics",
+    "facebook-insights",
+    "facebook-scheduling",
+    "facebook-posts",
+    "page-insights",
+    "personal-posts",
+    "ad-insights",
+    "openclaw",
+    "ai-agent",
+    "automation",
+    "json-api"
   ],
   "license": "MIT",
   "dependencies": {
-    "commander": "^14.0.1"
+    "commander": "^14.0.1",
+    "smol-toml": "^1.6.0"
   },
   "devDependencies": {
     "@types/node": "^24.5.2",

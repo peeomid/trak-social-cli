@@ -14,6 +14,12 @@ type DataRows = {
   data: Array<Record<string, unknown>>;
 };
 
+type InsightsFilter = {
+  field: string;
+  operator: "IN";
+  value: string[];
+};
+
 export async function listBusinesses(
   config: MetaConfig,
   tokenStore: TokenStore,
@@ -51,7 +57,8 @@ export async function listBusinessPages(
 }
 
 export function buildInsightsParams(query: InsightsQuery): Record<string, string | number | undefined> {
-  return {
+  const filters = buildInsightsFiltering(query);
+  const params: Record<string, string | number | undefined> = {
     fields: query.fields.join(","),
     level: query.level,
     date_preset: query.datePreset,
@@ -59,6 +66,73 @@ export function buildInsightsParams(query: InsightsQuery): Record<string, string
     time_increment: query.timeIncrement,
     limit: query.limit,
   };
+  if (filters.length > 0) {
+    params.filtering = JSON.stringify(filters);
+  }
+  return params;
+}
+
+export function buildInsightsFiltering(query: InsightsQuery): InsightsFilter[] {
+  validateInsightsFilterCombination(query);
+
+  const filters: InsightsFilter[] = [];
+  if (query.campaignId) {
+    filters.push({
+      field: "campaign.id",
+      operator: "IN",
+      value: [query.campaignId],
+    });
+  }
+  if (query.adSetId) {
+    filters.push({
+      field: "adset.id",
+      operator: "IN",
+      value: [query.adSetId],
+    });
+  }
+  if (query.adId) {
+    filters.push({
+      field: "ad.id",
+      operator: "IN",
+      value: [query.adId],
+    });
+  }
+  if (query.effectiveStatus) {
+    filters.push({
+      field: buildStatusFilterField(query.level),
+      operator: "IN",
+      value: [query.effectiveStatus],
+    });
+  }
+  return filters;
+}
+
+export function validateInsightsFilterCombination(query: InsightsQuery): void {
+  if (query.adId && query.adSetId) {
+    throw new Error("--ad-id cannot be combined with --adset-id. Choose one filter.");
+  }
+  if (query.adId && query.campaignId) {
+    throw new Error("--ad-id cannot be combined with --campaign-id. Choose one filter.");
+  }
+  if (query.level === "campaign" && query.adSetId) {
+    throw new Error("--adset-id cannot be used with --level campaign. Use --level adset or remove --adset-id.");
+  }
+  if (query.level === "campaign" && query.adId) {
+    throw new Error("--ad-id cannot be used with --level campaign. Use --level ad or remove --ad-id.");
+  }
+  if (query.level === "adset" && query.adId) {
+    throw new Error("--ad-id cannot be used with --level adset. Use --level ad or remove --ad-id.");
+  }
+}
+
+function buildStatusFilterField(level: InsightsQuery["level"]): string {
+  if (level === "ad") {
+    return "ad.effective_status";
+  }
+  if (level === "adset") {
+    return "adset.effective_status";
+  }
+  return "campaign.effective_status";
 }
 
 export async function listAdAccounts(

@@ -1,4 +1,13 @@
-import type { MetaConfig, PagePostScheduleInput, SecretStore, TokenStore } from "../types/models.js";
+import type {
+  MetaConfig,
+  PageInsightsPeriod,
+  PageInsightsTimeRange,
+  PagePostInsightMetric,
+  PagePostInsightRow,
+  PagePostScheduleInput,
+  SecretStore,
+  TokenStore,
+} from "../types/models.js";
 import { metaRequest } from "./http.js";
 
 type PageListResponse = {
@@ -27,10 +36,55 @@ type PostInsightsResponse = {
   data: Array<{
     name: string;
     values?: Array<{
-      value?: number;
+      value?: number | string | Record<string, unknown>;
     }>;
   }>;
 };
+
+const defaultPagePostInsightMetrics: PagePostInsightMetric[] = [
+  "post_impressions_unique",
+  "post_clicks",
+  "post_reactions_like_total",
+  "post_video_views",
+];
+
+const supportedPagePostInsightMetrics = [
+  "post_impressions",
+  "post_impressions_unique",
+  "post_clicks",
+  "post_engaged_users",
+  "post_reactions_like_total",
+  "post_reactions_love_total",
+  "post_reactions_wow_total",
+  "post_reactions_haha_total",
+  "post_reactions_sorry_total",
+  "post_reactions_anger_total",
+  "post_video_views",
+] as const satisfies readonly PagePostInsightMetric[];
+
+export function getDefaultPagePostInsightMetrics(): string[] {
+  return [...defaultPagePostInsightMetrics];
+}
+
+export function getSupportedPagePostInsightMetrics(): string[] {
+  return [...supportedPagePostInsightMetrics];
+}
+
+export function validatePagePostInsightMetrics(metrics: string[]): string[] {
+  const invalid = metrics.filter((metric) => !supportedPagePostInsightMetrics.includes(metric as PagePostInsightMetric));
+  if (invalid.length > 0) {
+    throw new Error(`Unsupported Page insight metric(s): ${invalid.join(", ")}`);
+  }
+  return metrics;
+}
+
+export function buildPageInsightsTimeParams(input: PageInsightsTimeRange): Record<string, string | undefined> {
+  return {
+    date_preset: input.since || input.until ? undefined : input.datePreset,
+    since: input.since,
+    until: input.until,
+  };
+}
 
 export async function listPages(
   config: MetaConfig,
@@ -82,16 +136,7 @@ export async function getPost(
   input: { pageId: string; postId: string },
 ): Promise<Record<string, unknown>> {
   const accessToken = await getPageAccessToken(config, tokenStore, secretStore, input.pageId);
-  return metaRequest<Record<string, unknown>>({
-    path: `/${input.postId}`,
-    accessToken,
-    query: {
-      fields: "id,message,created_time,permalink_url,scheduled_publish_time,is_published",
-    },
-    config,
-    tokenStore,
-    secretStore,
-  });
+  return getPagePostDetails(config, tokenStore, secretStore, input.postId, accessToken);
 }
 
 export async function schedulePost(
@@ -126,6 +171,38 @@ export async function listPostStats(
     limit: number;
   },
 ): Promise<Array<Record<string, unknown>>> {
+  const rows = await listPagePostInsights(config, tokenStore, secretStore, {
+    pageId: input.pageId,
+    limit: input.limit,
+    metrics: getDefaultPagePostInsightMetrics(),
+    period: "lifetime",
+  });
+
+  return rows.map((row) => ({
+    id: row.postId,
+    created_time: row.createdTime,
+    permalink_url: row.permalinkUrl,
+    message: truncateMessage(row.message),
+    share_count: row.shareCount,
+    ...row.insights,
+  }));
+}
+
+export async function listPagePostInsights(
+  config: MetaConfig,
+  tokenStore: TokenStore,
+  secretStore: SecretStore,
+  input: {
+    pageId: string;
+    limit: number;
+    metrics: string[];
+    period: PageInsightsPeriod;
+    datePreset?: string;
+    since?: string;
+    until?: string;
+    includeMessage?: boolean;
+  },
+): Promise<PagePostInsightRow[]> {
   const accessToken = await getPageAccessToken(config, tokenStore, secretStore, input.pageId);
   const posts = await metaRequest<PageFeedResponse>({
     path: `/${input.pageId}/posts`,
@@ -133,6 +210,8 @@ export async function listPostStats(
     query: {
       fields: "id,message,created_time,permalink_url,shares",
       limit: input.limit,
+      since: input.since,
+      until: input.until,
     },
     config,
     tokenStore,
@@ -140,22 +219,102 @@ export async function listPostStats(
   });
 
   return Promise.all(
-    posts.data.map(async (post) => {
-      const postId = String(post.id ?? "");
-      const insights = await getPostInsights(config, tokenStore, secretStore, postId, accessToken);
-      return {
-        id: post.id,
-        created_time: post.created_time,
-        permalink_url: post.permalink_url,
-        message: truncateMessage(post.message),
-        share_count: getShareCount(post.shares),
-        post_impressions_unique: insights.post_impressions_unique,
-        post_clicks: insights.post_clicks,
-        post_reactions_like_total: insights.post_reactions_like_total,
-        post_video_views: insights.post_video_views,
-      };
+    posts.data.map((post) =>
+      getPagePostInsightRow(config, tokenStore, secretStore, {
+        post,
+        accessToken,
+        metrics: input.metrics,
+        period: input.period,
+        datePreset: input.datePreset,
+        since: input.since,
+        until: input.until,
+        includeMessage: input.includeMessage,
+      }),
+    ),
+  );
+}
+
+export async function getPagePostInsights(
+  config: MetaConfig,
+  tokenStore: TokenStore,
+  secretStore: SecretStore,
+  input: {
+    pageId: string;
+    postId: string;
+    metrics: string[];
+    period: PageInsightsPeriod;
+    datePreset?: string;
+    since?: string;
+    until?: string;
+    includeMessage?: boolean;
+  },
+): Promise<PagePostInsightRow> {
+  const accessToken = await getPageAccessToken(config, tokenStore, secretStore, input.pageId);
+  const post = await getPagePostDetails(config, tokenStore, secretStore, input.postId, accessToken);
+  return getPagePostInsightRow(config, tokenStore, secretStore, {
+    post,
+    accessToken,
+    metrics: input.metrics,
+    period: input.period,
+    datePreset: input.datePreset,
+    since: input.since,
+    until: input.until,
+    includeMessage: input.includeMessage,
+  });
+}
+
+export async function comparePagePostInsights(
+  config: MetaConfig,
+  tokenStore: TokenStore,
+  secretStore: SecretStore,
+  input: {
+    pageId: string;
+    postId: string;
+    otherPostId: string;
+    metrics: string[];
+    period: PageInsightsPeriod;
+    datePreset?: string;
+    since?: string;
+    until?: string;
+    includeMessage?: boolean;
+  },
+): Promise<{
+  left: PagePostInsightRow;
+  right: PagePostInsightRow;
+  delta: Record<string, number | null>;
+}> {
+  const [left, right] = await Promise.all([
+    getPagePostInsights(config, tokenStore, secretStore, {
+      pageId: input.pageId,
+      postId: input.postId,
+      metrics: input.metrics,
+      period: input.period,
+      datePreset: input.datePreset,
+      since: input.since,
+      until: input.until,
+      includeMessage: input.includeMessage,
+    }),
+    getPagePostInsights(config, tokenStore, secretStore, {
+      pageId: input.pageId,
+      postId: input.otherPostId,
+      metrics: input.metrics,
+      period: input.period,
+      datePreset: input.datePreset,
+      since: input.since,
+      until: input.until,
+      includeMessage: input.includeMessage,
+    }),
+  ]);
+
+  const delta = Object.fromEntries(
+    input.metrics.map((metric) => {
+      const leftValue = left.insights[metric];
+      const rightValue = right.insights[metric];
+      return [metric, typeof leftValue === "number" && typeof rightValue === "number" ? leftValue - rightValue : null];
     }),
   );
+
+  return { left, right, delta };
 }
 
 export async function resolvePage(
@@ -193,26 +352,87 @@ async function getPageAccessToken(
   return resolvedPage.access_token;
 }
 
-async function getPostInsights(
+async function getPagePostDetails(
   config: MetaConfig,
   tokenStore: TokenStore,
   secretStore: SecretStore,
   postId: string,
   accessToken: string,
-): Promise<Record<string, number | null>> {
-  const metrics = [
-    "post_impressions_unique",
-    "post_clicks",
-    "post_reactions_like_total",
-    "post_video_views",
-  ];
-
-  const response = await metaRequest<PostInsightsResponse>({
-    path: `/${postId}/insights`,
+): Promise<Record<string, unknown>> {
+  return metaRequest<Record<string, unknown>>({
+    path: `/${postId}`,
     accessToken,
     query: {
-      metric: metrics.join(","),
-      period: "lifetime",
+      fields: "id,message,created_time,permalink_url,scheduled_publish_time,is_published,shares",
+    },
+    config,
+    tokenStore,
+    secretStore,
+  });
+}
+
+async function getPagePostInsightRow(
+  config: MetaConfig,
+  tokenStore: TokenStore,
+  secretStore: SecretStore,
+  input: {
+    post: Record<string, unknown>;
+    accessToken: string;
+    metrics: string[];
+    period: PageInsightsPeriod;
+    datePreset?: string;
+    since?: string;
+    until?: string;
+    includeMessage?: boolean;
+  },
+): Promise<PagePostInsightRow> {
+  const postId = String(input.post.id ?? "");
+  const insights = await getPostInsights(config, tokenStore, secretStore, {
+    postId,
+    accessToken: input.accessToken,
+    metrics: input.metrics,
+    period: input.period,
+    datePreset: input.datePreset,
+    since: input.since,
+    until: input.until,
+  });
+
+  return {
+    postId,
+    createdTime: getOptionalString(input.post.created_time),
+    permalinkUrl: getOptionalString(input.post.permalink_url),
+    message: input.includeMessage ? getOptionalString(input.post.message) : truncateMessage(input.post.message),
+    shareCount: getShareCount(input.post.shares),
+    insights: Object.fromEntries(input.metrics.map((metric) => [metric, insights[metric] ?? null])),
+    missingMetrics: input.metrics.filter((metric) => insights[metric] === null || insights[metric] === undefined),
+  };
+}
+
+async function getPostInsights(
+  config: MetaConfig,
+  tokenStore: TokenStore,
+  secretStore: SecretStore,
+  input: {
+    postId: string;
+    accessToken: string;
+    metrics: string[];
+    period: PageInsightsPeriod;
+    datePreset?: string;
+    since?: string;
+    until?: string;
+  },
+): Promise<Record<string, number | null>> {
+  const response = await metaRequest<PostInsightsResponse>({
+    path: `/${input.postId}/insights`,
+    accessToken: input.accessToken,
+    query: {
+      metric: input.metrics.join(","),
+      period: input.period,
+      ...buildPageInsightsTimeParams({
+        datePreset: input.datePreset,
+        since: input.since,
+        until: input.until,
+      }),
     },
     config,
     tokenStore,
@@ -220,12 +440,22 @@ async function getPostInsights(
   });
 
   return Object.fromEntries(
-    metrics.map((metric) => {
+    input.metrics.map((metric) => {
       const entry = response.data.find((row) => row.name === metric);
-      const value = entry?.values?.[0]?.value;
-      return [metric, typeof value === "number" ? value : null];
+      return [metric, normalizeInsightValue(entry?.values?.[0]?.value)];
     }),
   );
+}
+
+function normalizeInsightValue(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
 }
 
 function getShareCount(shares: unknown): number | null {
@@ -234,6 +464,10 @@ function getShareCount(shares: unknown): number | null {
   }
   const count = (shares as { count?: unknown }).count;
   return typeof count === "number" ? count : null;
+}
+
+function getOptionalString(value: unknown): string | undefined {
+  return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
 function truncateMessage(message: unknown): string {

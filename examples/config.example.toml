@@ -1,0 +1,16 @@
+[auth]
+app_id = "1493983742290842"
+app_secret = "YOUR_META_APP_SECRET"
+redirect_port = 8787
+
+[defaults]
+api_version = "v25.0"
+page_id = "1548373332058326"
+ad_account_id = "1243158725700119"
+output = "table"
+
+[aliases.pages]
+main = "1548373332058326"
+
+[aliases.ad_accounts]
+ads1 = "1243158725700119"

@@ -6,6 +6,7 @@ import { metaRequest } from "./http.js";
 const loginScopes = [
   "pages_show_list",
   "pages_read_engagement",
+  "read_insights",
   "pages_manage_posts",
   "ads_read",
   "ads_management",
@@ -15,7 +16,7 @@ const loginScopes = [
 type OAuthTokenResponse = {
   access_token: string;
   token_type: string;
-  expires_in: number;
+  expires_in?: number | string;
 };
 
 type MeAccountsResponse = {
@@ -27,14 +28,14 @@ type MeAccountsResponse = {
 };
 
 export async function login(config: MetaConfig, secretStore: SecretStore): Promise<TokenStore> {
-  const appId = config.appId || process.env.META_APP_ID || "";
+  const appId = config.appId;
   if (!appId) {
-    throw new Error("Missing Meta app id. Set appId in config or META_APP_ID in env.");
+    throw new Error("Missing Meta app id. Set auth.app_id in ~/.config/trak/config.toml.");
   }
 
-  const appSecret = secretStore.appSecret || process.env[config.appSecretEnvVar];
+  const appSecret = secretStore.appSecret;
   if (!appSecret) {
-    throw new Error(`Missing app secret. Save it in local config or set ${config.appSecretEnvVar} in env.`);
+    throw new Error("Missing Meta app secret. Set auth.app_secret in ~/.config/trak/config.toml.");
   }
 
   const redirectUri = `http://localhost:${config.redirectPort}/callback`;
@@ -48,13 +49,13 @@ export async function login(config: MetaConfig, secretStore: SecretStore): Promi
   const longLived = await exchangeLongLivedToken({
     appId,
     appSecret,
-    shortLivedAccessToken: shortLived.access_token,
+    accessToken: shortLived.access_token,
   });
 
   const pages = await fetchPages(config, secretStore, longLived.access_token);
   return {
     userAccessToken: longLived.access_token,
-    userTokenExpiresAt: new Date(Date.now() + longLived.expires_in * 1000).toISOString(),
+    userTokenExpiresAt: resolveTokenExpiryIso(longLived.expires_in),
     scopes: [...loginScopes],
     pageTokens: Object.fromEntries(
       pages.data.map((page) => [
@@ -68,6 +69,21 @@ export async function login(config: MetaConfig, secretStore: SecretStore): Promi
       ]),
     ),
   };
+}
+
+function resolveTokenExpiryIso(expiresIn: number | string | undefined): string {
+  const seconds =
+    typeof expiresIn === "number"
+      ? expiresIn
+      : typeof expiresIn === "string" && expiresIn.trim().length > 0
+        ? Number(expiresIn)
+        : Number.NaN;
+
+  if (!Number.isFinite(seconds) || seconds <= 0) {
+    return "";
+  }
+
+  return new Date(Date.now() + seconds * 1000).toISOString();
 }
 
 export function getRequestedScopes(): string[] {
@@ -116,16 +132,16 @@ async function exchangeCodeForToken(input: {
   return data;
 }
 
-async function exchangeLongLivedToken(input: {
+export async function exchangeLongLivedToken(input: {
   appId: string;
   appSecret: string;
-  shortLivedAccessToken: string;
+  accessToken: string;
 }): Promise<OAuthTokenResponse> {
   const url = new URL("https://graph.facebook.com/v25.0/oauth/access_token");
   url.searchParams.set("grant_type", "fb_exchange_token");
   url.searchParams.set("client_id", input.appId);
   url.searchParams.set("client_secret", input.appSecret);
-  url.searchParams.set("fb_exchange_token", input.shortLivedAccessToken);
+  url.searchParams.set("fb_exchange_token", input.accessToken);
 
   const response = await fetch(url);
   const data = (await response.json()) as OAuthTokenResponse & { error?: { message?: string } };

@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import { chmodSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { ensureConfigDir } from "./config.js";
-import { getLegacyTokenPath, getTokenPath } from "./paths.js";
+import { getTokenPath } from "./paths.js";
 import type { TokenStore } from "../types/models.js";
 
 const emptyStore: TokenStore = {
@@ -12,12 +12,11 @@ const emptyStore: TokenStore = {
 };
 
 export function loadTokenStore(): TokenStore {
-  const filePath = fs.existsSync(getTokenPath()) ? getTokenPath() : getLegacyTokenPath();
-  if (!fs.existsSync(filePath)) {
+  if (!fs.existsSync(getTokenPath())) {
     return { ...emptyStore };
   }
 
-  const raw = JSON.parse(readFileSync(filePath, "utf8")) as Partial<TokenStore>;
+  const raw = JSON.parse(readFileSync(getTokenPath(), "utf8")) as Partial<TokenStore>;
   return {
     ...emptyStore,
     ...raw,
