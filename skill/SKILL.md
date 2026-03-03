@@ -103,6 +103,7 @@ trak content compare --source facebook --account sahaja --id POST_A --other-id P
 
 ```bash
 trak campaign list --source facebook --account luan
+trak campaign list --source facebook --account luan --status ACTIVE
 trak campaign stats --source facebook --account luan --level campaign --date-preset last_7d
 trak campaign get --source facebook --account luan --id CAMPAIGN_ID
 trak campaign ad list --source facebook --account luan --campaign CAMPAIGN_ID
@@ -116,6 +117,7 @@ trak report daily --source facebook
 trak report weekly --source facebook
 trak report summary --source facebook --account sahaja --from 2026-03-01 --to 2026-03-03
 trak report top-content --source facebook --account sahaja --limit 5
+trak report ad-content --source facebook --account luan --date-preset this_month
 ```
 
 ### Publish

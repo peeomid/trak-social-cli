@@ -151,6 +151,7 @@ List campaigns:
 
 ```bash
 trak campaign list --source facebook --account luan
+trak campaign list --source facebook --account luan --status ACTIVE
 ```
 
 Campaign or ad performance:
@@ -186,12 +187,14 @@ Date-range summary:
 
 ```bash
 trak report summary --source facebook --account sahaja --from 2026-03-01 --to 2026-03-03
+trak report ad-content --source facebook --account luan --date-preset this_month
 ```
 
 Top content:
 
 ```bash
 trak report top-content --source facebook --account sahaja --limit 5
+trak report ad-content --source facebook --account luan --date-preset this_month
 ```
 
 ## Publish

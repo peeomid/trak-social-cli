@@ -52,7 +52,7 @@ Runtime files:
 - `content list|get|stats|compare`
 - `campaign list|stats|get`
 - `campaign ad list`
-- `report daily|weekly|summary|top-content`
+- `report daily|weekly|summary|top-content|ad-content`
 - `publish preview|schedule`
 - `config init|show|set`
 - `config alias list|set|remove|rename`

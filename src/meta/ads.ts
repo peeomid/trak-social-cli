@@ -168,7 +168,7 @@ export async function listCampaigns(
     path: `/${normalizeAdAccountId(adAccountId)}/campaigns`,
     query: {
       fields: "id,name,status,objective",
-      effective_status: status,
+      effective_status: status ? JSON.stringify([status]) : undefined,
       limit: 100,
     },
     config,

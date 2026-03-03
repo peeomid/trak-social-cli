@@ -722,6 +722,38 @@ function addReportCommands(program: Command): void {
         })),
       );
     });
+
+  report
+    .command("ad-content")
+    .option("--source <source>", "Source name", "facebook")
+    .option("--account <ref>", "Ad account id or alias")
+    .option("--date-preset <preset>", "Date preset", "last_7d")
+    .option("--status <status>", "Filter by effective status", "ACTIVE")
+    .option("--limit <limit>", "Row limit", "20")
+    .description("Compare ad performance with source post content")
+    .addHelpText(
+      "after",
+      `
+Examples:
+  trak report ad-content --source facebook --account luan
+  trak report ad-content --source facebook --account luan --date-preset this_month
+`,
+    )
+    .action(async (options) => {
+      const sourceName = resolveSource(options.source);
+      assertImplementedSource(sourceName);
+      const config = loadConfig();
+      render(
+        config,
+        await buildFacebookAdContentReport(
+          config,
+          resolveAdAccountRef(config, options.account),
+          options.datePreset,
+          options.status,
+          parsePositiveInteger(options.limit, "--limit"),
+        ),
+      );
+    });
 }
 
 function addPublishCommands(program: Command): void {
@@ -2407,6 +2439,76 @@ async function buildFacebookReport(
       .sort((left, right) => Number(right.post_impressions_unique ?? 0) - Number(left.post_impressions_unique ?? 0))
       .slice(0, 5),
   };
+}
+
+async function buildFacebookAdContentReport(
+  config: MetaConfig,
+  adAccountId: string,
+  datePreset: string,
+  status: string | undefined,
+  limit: number,
+): Promise<Array<Record<string, unknown>>> {
+  const tokenStore = loadTokenStore();
+  const secretStore = loadSecretStore();
+  const response = await getInsights(config, tokenStore, secretStore, {
+    adAccountId,
+    level: "ad",
+    datePreset,
+    fields: ["ad_id", "campaign_name", "adset_name", "ad_name", "spend", "impressions", "reach", "clicks", "ctr", "cpm"],
+    effectiveStatus: status,
+    limit,
+  });
+
+  return Promise.all(
+    response.data.map(async (row) => {
+      const adId = typeof row.ad_id === "string" ? row.ad_id : "";
+      const resolved = await resolveAdPost(config, tokenStore, secretStore, adId);
+      let postStats: Record<string, unknown> | undefined;
+      if (resolved.summary.page_id && resolved.summary.post_id) {
+        const stats = await getPagePostInsights(config, tokenStore, secretStore, {
+          pageId: resolved.summary.page_id,
+          postId: resolved.summary.post_id,
+          metrics: getDefaultPagePostInsightMetrics(),
+          period: "lifetime",
+          includeMessage: true,
+        });
+        postStats = flattenPageInsightsRow(stats, getDefaultPagePostInsightMetrics()) as Record<string, unknown>;
+      }
+
+      return {
+        ad_id: adId,
+        campaign_name: row.campaign_name,
+        adset_name: row.adset_name,
+        ad_name: row.ad_name,
+        spend: row.spend,
+        impressions: row.impressions,
+        reach: row.reach,
+        clicks: row.clicks,
+        ctr: row.ctr,
+        cpm: row.cpm,
+        creative_id: resolved.summary.creative_id,
+        creative_type: resolved.summary.creative_type,
+        post_id: resolved.summary.post_id,
+        page_id: resolved.summary.page_id,
+        post_resolution: resolved.summary.post_resolution,
+        message_preview: truncateOutputMessage(resolved.summary.message),
+        post_permalink_url: resolved.summary.permalink_url,
+        post_impressions_unique: postStats?.post_impressions_unique ?? null,
+        post_clicks: postStats?.post_clicks ?? null,
+        post_reactions_like_total: postStats?.post_reactions_like_total ?? null,
+        post_video_views: postStats?.post_video_views ?? null,
+        message: process.argv.includes("--json") ? resolved.summary.message : undefined,
+        raw: process.argv.includes("--json")
+          ? {
+              ad: resolved.ad,
+              creative: resolved.creative,
+              post: resolved.post,
+              postStats,
+            }
+          : undefined,
+      };
+    }),
+  );
 }
 
 function summarizeFacebookContent(rows: Array<Record<string, unknown>>): Record<string, number> {
