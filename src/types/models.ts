@@ -213,3 +213,52 @@ export type AdCreateInput = {
   name: string;
   status: "PAUSED";
 };
+
+export type AdObject = {
+  id: string;
+  name?: string;
+  status?: string;
+  effective_status?: string;
+  creative?: {
+    id?: string;
+    name?: string;
+  };
+};
+
+export type AdCreativeObject = {
+  id: string;
+  name?: string;
+  title?: string;
+  body?: string;
+  object_story_id?: string;
+  effective_object_story_id?: string;
+  object_story_spec?: Record<string, unknown>;
+  image_hash?: string;
+  thumbnail_url?: string;
+  url_tags?: string;
+  asset_feed_spec?: Record<string, unknown>;
+};
+
+export type ResolvedAdCreative = {
+  ad_id: string;
+  ad_name?: string;
+  creative_id: string | null;
+  creative_name?: string;
+  creative_type: "page_post" | "link" | "video" | "photo" | "unknown";
+  page_id: string | null;
+  post_id: string | null;
+  effective_object_story_id: string | null;
+  message: string | null;
+  headline: string | null;
+  link_url: string | null;
+  image_hash: string | null;
+  thumbnail_url: string | null;
+  is_dark_post: boolean;
+};
+
+export type ResolvedAdPost = ResolvedAdCreative & {
+  post_resolution: "resolved" | "unresolved";
+  created_time: string | null;
+  permalink_url: string | null;
+  stats?: Record<string, unknown>;
+};

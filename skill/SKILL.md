@@ -106,6 +106,7 @@ trak campaign list --source facebook --account luan
 trak campaign stats --source facebook --account luan --level campaign --date-preset last_7d
 trak campaign get --source facebook --account luan --id CAMPAIGN_ID
 trak campaign ad list --source facebook --account luan --campaign CAMPAIGN_ID
+trak campaign ad list --source facebook --account luan --campaign CAMPAIGN_ID --with-creative
 ```
 
 ### Report
@@ -147,6 +148,9 @@ trak facebook ads create campaign --account luan --name "Traffic test" --objecti
 trak facebook ads create adset --account luan --campaign CAMPAIGN_ID --name "VN ad set" --daily-budget 200000 --billing-event IMPRESSIONS --optimization-goal LINK_CLICKS --targeting-file ./targeting.json
 trak facebook ads create creative --account luan --page sahaja --name "Creative 1" --message "Check this out" --link "https://example.com"
 trak facebook ads create ad --account luan --adset ADSET_ID --creative CREATIVE_ID --name "Ad 1"
+trak facebook ads ad get --account luan --id AD_ID
+trak facebook ads ad creative --account luan --id AD_ID
+trak facebook ads ad post --account luan --id AD_ID --with-stats
 
 trak facebook business list
 trak facebook business pages list --business BUSINESS_ID --owned

@@ -10,6 +10,8 @@ import {
 import {
   buildAdSetPayload,
   buildCreativePayload,
+  extractAdCreativeSummary,
+  extractPostIdFromCreative,
   buildInsightsFiltering,
   buildInsightsParams,
   validateInsightsFilterCombination,
@@ -193,6 +195,58 @@ test("buildCreativePayload builds object_story_spec", () => {
   assert.equal(objectStorySpec.page_id, "123");
   assert.equal(objectStorySpec.link_data.link, "https://example.com");
   assert.equal(objectStorySpec.link_data.image_hash, "abc123");
+});
+
+test("extractPostIdFromCreative prefers effective object story id", () => {
+  assert.equal(
+    extractPostIdFromCreative({
+      effective_object_story_id: "1548373332058326_1220155170320578",
+      object_story_id: "1548373332058326_1220148440321251",
+    }),
+    "1548373332058326_1220155170320578",
+  );
+});
+
+test("extractAdCreativeSummary reads message, link, and post id from creative", () => {
+  const summary = extractAdCreativeSummary(
+    {
+      id: "999",
+      name: "Ad 1",
+      creative: { id: "123" },
+    },
+    {
+      id: "123",
+      name: "Creative 1",
+      effective_object_story_id: "1548373332058326_1220155170320578",
+      object_story_spec: {
+        page_id: "1548373332058326",
+        link_data: {
+          message: "Hello world",
+          name: "Headline",
+          link: "https://example.com",
+        },
+      },
+      image_hash: "hash123",
+      thumbnail_url: "https://example.com/thumb.jpg",
+    },
+  );
+
+  assert.deepEqual(summary, {
+    ad_id: "999",
+    ad_name: "Ad 1",
+    creative_id: "123",
+    creative_name: "Creative 1",
+    creative_type: "page_post",
+    page_id: "1548373332058326",
+    post_id: "1548373332058326_1220155170320578",
+    effective_object_story_id: "1548373332058326_1220155170320578",
+    message: "Hello world",
+    headline: "Headline",
+    link_url: "https://example.com",
+    image_hash: "hash123",
+    thumbnail_url: "https://example.com/thumb.jpg",
+    is_dark_post: true,
+  });
 });
 
 test("getRequestedScopes includes read_insights and excludes invalid user_posts scope", () => {

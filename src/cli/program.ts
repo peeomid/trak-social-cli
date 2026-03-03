@@ -8,11 +8,15 @@ import {
   createAdSet,
   createCampaign,
   createCreative,
+  getAd,
   getInsights,
+  getAdCreative,
   listAdAccounts,
   listBusinesses,
   listBusinessPages,
   listCampaigns,
+  resolveAdCreative,
+  resolveAdPost,
 } from "../meta/ads.js";
 import {
   buildPageInsightsTimeParams,
@@ -557,6 +561,7 @@ function addCampaignCommands(program: Command): void {
     .requiredOption("--campaign <id>", "Campaign id")
     .option("--source <source>", "Source name", "facebook")
     .option("--account <ref>", "Account id or alias")
+    .option("--with-creative", "Resolve creative and post summary for each ad")
     .option("--date-preset <preset>", "Date preset", "last_7d")
     .option("--status <status>", "Filter by effective status")
     .option(
@@ -566,6 +571,14 @@ function addCampaignCommands(program: Command): void {
     )
     .option("--limit <limit>", "Row limit", "100")
     .description("List ads inside one campaign")
+    .addHelpText(
+      "after",
+      `
+Examples:
+  trak campaign ad list --source facebook --account luan --campaign CAMPAIGN_ID
+  trak campaign ad list --source facebook --account luan --campaign CAMPAIGN_ID --with-creative
+`,
+    )
     .action(async (options) => {
       const sourceName = resolveSource(options.source);
       assertImplementedSource(sourceName);
@@ -573,27 +586,51 @@ function addCampaignCommands(program: Command): void {
       const tokenStore = loadTokenStore();
       const secretStore = loadSecretStore();
       const adAccountId = resolveAdAccountRef(config, options.account);
+      const fields = String(options.fields)
+        .split(",")
+        .map((value) => value.trim())
+        .filter(Boolean);
+      if (options.withCreative && !fields.includes("ad_id")) {
+        fields.push("ad_id");
+      }
       const response = await getInsights(config, tokenStore, secretStore, {
         adAccountId,
         level: "ad",
         datePreset: options.datePreset,
-        fields: String(options.fields)
-          .split(",")
-          .map((value) => value.trim())
-          .filter(Boolean),
+        fields,
         campaignId: options.campaign,
         effectiveStatus: options.status,
         limit: parsePositiveInteger(options.limit, "--limit"),
       });
-      render(
-        config,
-        response.data.map((row) => ({
-          source: sourceName,
-          level: "ad",
-          account_id: adAccountId,
-          ...row,
-        })),
+      const rows: Array<Record<string, unknown>> = response.data.map((row) => ({
+        source: sourceName,
+        level: "ad",
+        account_id: adAccountId,
+        ...row,
+      }));
+      if (!options.withCreative) {
+        render(config, rows);
+        return;
+      }
+
+      const enriched = await Promise.all(
+        rows.map(async (row) => {
+          const adId = typeof row.ad_id === "string" ? row.ad_id : null;
+          if (!adId) {
+            return {
+              ...row,
+              creative_resolution: "missing_ad_id",
+            };
+          }
+          const resolved = await resolveAdCreative(config, tokenStore, secretStore, adId);
+          return {
+            ...row,
+            ...resolved.summary,
+            message_preview: truncateOutputMessage(resolved.summary.message),
+          };
+        }),
       );
+      render(config, enriched);
     });
 }
 
@@ -1279,6 +1316,107 @@ Examples:
       const adAccountId = resolveAdAccountRef(config, options.account);
       const response = await listCampaigns(config, tokenStore, secretStore, adAccountId, options.status);
       render(config, response.data);
+    });
+
+  const ad = ads.command("ad").description("Single ad inspection");
+  ad
+    .command("get")
+    .option("--account <accountId>", "Ad account id or alias")
+    .requiredOption("--id <adId>", "Ad id")
+    .description("Get one ad object")
+    .addHelpText(
+      "after",
+      `
+Example:
+  trak facebook ads ad get --account luan --id AD_ID
+`,
+    )
+    .action(async (options) => {
+      const config = loadConfig();
+      const tokenStore = loadTokenStore();
+      const secretStore = loadSecretStore();
+      const adAccountId = resolveAdAccountRef(config, options.account);
+      const row = await getAd(config, tokenStore, secretStore, options.id);
+      render(config, {
+        account_id: adAccountId,
+        ...row,
+        creative_id: row.creative?.id ?? null,
+      });
+    });
+
+  ad
+    .command("creative")
+    .option("--account <accountId>", "Ad account id or alias")
+    .requiredOption("--id <adId>", "Ad id")
+    .description("Resolve creative behind one ad")
+    .addHelpText(
+      "after",
+      `
+Example:
+  trak facebook ads ad creative --account luan --id AD_ID
+`,
+    )
+    .action(async (options) => {
+      const config = loadConfig();
+      const tokenStore = loadTokenStore();
+      const secretStore = loadSecretStore();
+      const adAccountId = resolveAdAccountRef(config, options.account);
+      const resolved = await resolveAdCreative(config, tokenStore, secretStore, options.id);
+      render(config, {
+        account_id: adAccountId,
+        ...resolved.summary,
+        raw: process.argv.includes("--json")
+          ? {
+              ad: resolved.ad,
+              creative: resolved.creative,
+            }
+          : undefined,
+      });
+    });
+
+  ad
+    .command("post")
+    .option("--account <accountId>", "Ad account id or alias")
+    .requiredOption("--id <adId>", "Ad id")
+    .option("--with-stats", "Load Page post stats when the post can be resolved")
+    .description("Resolve source post behind one ad")
+    .addHelpText(
+      "after",
+      `
+Examples:
+  trak facebook ads ad post --account luan --id AD_ID
+  trak facebook ads ad post --account luan --id AD_ID --with-stats
+`,
+    )
+    .action(async (options) => {
+      const config = loadConfig();
+      const tokenStore = loadTokenStore();
+      const secretStore = loadSecretStore();
+      const adAccountId = resolveAdAccountRef(config, options.account);
+      const resolved = await resolveAdPost(config, tokenStore, secretStore, options.id);
+      let stats: Record<string, unknown> | undefined;
+      if (options.withStats && resolved.summary.post_id && resolved.summary.page_id) {
+        const postStats = await getPagePostInsights(config, tokenStore, secretStore, {
+          pageId: resolved.summary.page_id,
+          postId: resolved.summary.post_id,
+          metrics: getDefaultPagePostInsightMetrics(),
+          period: "lifetime",
+          includeMessage: true,
+        });
+        stats = flattenPageInsightsRow(postStats, getDefaultPagePostInsightMetrics()) as Record<string, unknown>;
+      }
+      render(config, {
+        account_id: adAccountId,
+        ...resolved.summary,
+        stats,
+        raw: process.argv.includes("--json")
+          ? {
+              ad: resolved.ad,
+              creative: resolved.creative,
+              post: resolved.post,
+            }
+          : undefined,
+      });
     });
 
   const create = ads.command("create").description("Draft ad creation");
@@ -2157,6 +2295,13 @@ function formatUserPostSingleOutput(row: Awaited<ReturnType<typeof getUserPost>>
     object: "user_post",
     data: row,
   };
+}
+
+function truncateOutputMessage(message: string | null | undefined): string | null {
+  if (!message) {
+    return null;
+  }
+  return message.length > 140 ? `${message.slice(0, 137)}...` : message;
 }
 
 async function listFacebookAccountsOutput(
