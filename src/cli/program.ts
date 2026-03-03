@@ -731,6 +731,7 @@ function addReportCommands(program: Command): void {
     .option("--status <status>", "Filter by effective status", "ACTIVE")
     .option("--limit <limit>", "Row limit", "20")
     .option("--csv", "Print CSV instead of table/json")
+    .option("--out <path>", "Write output to file")
     .description("Compare ad performance with source post content")
     .addHelpText(
       "after",
@@ -739,6 +740,7 @@ Examples:
   trak report ad-content --source facebook --account luan
   trak report ad-content --source facebook --account luan --date-preset this_month
   trak report ad-content --source facebook --account luan --date-preset this_month --csv
+  trak report ad-content --source facebook --account luan --date-preset this_month --out ads.csv
 `,
     )
     .action(async (options) => {
@@ -752,6 +754,18 @@ Examples:
         options.status,
         parsePositiveInteger(options.limit, "--limit"),
       );
+      if (options.out) {
+        const outputPath = String(options.out);
+        const shouldWriteJson = process.argv.includes("--json") || outputPath.endsWith(".json");
+        fs.writeFileSync(outputPath, shouldWriteJson ? JSON.stringify(rows, null, 2) : toCsv(rows));
+        render(config, {
+          status: "written",
+          path: outputPath,
+          format: shouldWriteJson ? "json" : "csv",
+          rows: rows.length,
+        });
+        return;
+      }
       if (options.csv) {
         console.log(toCsv(rows));
         return;
