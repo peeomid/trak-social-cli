@@ -1,320 +1,210 @@
 ---
 name: trak
-description: Manage Facebook Pages, rich Page post insights, personal post reads, ad performance, and draft ads using the trak CLI. Use when asked to check Facebook Page posts, compare Page posts, inspect personal Facebook posts, schedule a Facebook post, view ad insights, list ad campaigns, create ads, discover business Pages, or pull social data as JSON for AI workflows.
-version: 1.0.0
+description: Use the trak CLI for Facebook content, campaigns, reports, publishing, and provider-specific Meta commands. Prefer the main task-first tree (`source`, `account`, `content`, `campaign`, `report`, `publish`) and use `facebook ...` for advanced provider-only actions.
+version: 2.0.0
 ---
 
-# trak — Facebook & Meta Ads CLI
+# trak
 
-CLI tool at `/Users/luannguyenthanh/Development/Osimify/trak-social-cli/` for managing Meta/Facebook Pages and Ads from terminal.
+Repo: `/Users/luannguyenthanh/Development/Osimify/trak-social-cli`
 
-## When to Use
+## What It Is
 
-- User asks to check Facebook Page posts or post performance
-- User asks to compare two Facebook Page posts
-- User asks to inspect their own personal Facebook posts
-- User asks to schedule a Facebook post
-- User asks for ad performance stats (spend, clicks, impressions, CTR)
-- User asks to list ad campaigns or ad accounts
-- User asks to create a campaign, ad set, creative, or ad
-- User asks to find or discover Facebook Pages (including business-owned)
-- User asks to pull social media data as JSON for AI analysis
-- User asks to compare post or ad performance
-- User asks for weekly social report data
+`trak` is now a multi-source CLI shape.
+
+Main command tree:
+- `trak source ...`
+- `trak account ...`
+- `trak content ...`
+- `trak campaign ...`
+- `trak report ...`
+- `trak publish ...`
+
+Provider trees:
+- `trak facebook ...`
+- `trak instagram ...`
+- `trak threads ...`
+- `trak ga ...`
+
+Current live provider:
+- Facebook
+
+Planned only for now:
+- Instagram
+- Threads
+- GA
+
+## When To Use
+
+Use this skill when user asks to:
+- check Facebook Page posts or post performance
+- compare two Page posts
+- inspect ad campaign or ad performance
+- schedule a Facebook Page post
+- list Pages, businesses, ad accounts, or campaigns
+- get JSON social data for AI workflows
+- check auth, token, or permission health for Meta
 
 ## Setup
 
-Already installed. Binary: `trak`
+Binary:
+- `trak`
 
-Config location: `~/.config/trak/`
+Config files:
+- `~/.config/trak/config.toml`
+- `~/.config/trak/tokens.json`
 
-Preferred config method:
-- run `trak config init` first
-- edit `~/.config/trak/config.toml`
-- do not put app secrets on the command line unless the user explicitly wants that
+Useful checks:
 
-Repo examples:
-- `/Users/luannguyenthanh/Development/Osimify/trak-social-cli/examples/config.example.toml`
-
-Check status:
 ```bash
 trak doctor
 trak doctor --live
 trak auth status
-trak auth refresh
+trak source list
 trak config show
 trak config alias list
 ```
 
-## Commands Reference
-
-### Auth
-```bash
-trak auth login          # Browser-based Meta login
-trak auth status         # Check token status
-trak auth refresh        # Re-check token, try refresh, rebuild Page tokens
-trak auth logout         # Clear tokens
-```
-
 Important:
-- `trak auth login` requests Page + ads permissions including `read_insights`
-- it does not request the invalid `user_posts` login scope
-- if Page post performance comes back blank, run `trak doctor --live` and check for missing `read_insights`
+- `read_insights` is required for Page post performance
+- invalid login scope `user_posts` is not requested anymore
 
-### Auth Diagnostics
+## Main Commands
+
+### Source
+
 ```bash
-trak doctor                                  # Local config + token checks
-trak doctor --live                           # Ask Meta for live auth health
-trak doctor --live --page PAGE_ID            # Validate one Page
-trak doctor --live --account AD_ACCOUNT_ID   # Validate one ad account
+trak source list
+trak source capabilities --source facebook
+trak source capabilities --source instagram
+trak source status --source ga
 ```
 
-Use these when:
-- token may be expired or revoked
-- permissions look wrong
-- Page works but ads do not
-- ads work but Page does not
+### Account
 
-### Page Discovery
 ```bash
-trak page list                                           # List accessible Pages
-trak page resolve --page SahajaVietnam                   # Resolve Page by username or ID
-trak business list                                       # List businesses
-trak business pages list --business BUSINESS_ID --owned  # Business-owned Pages
-trak business pages list --business BUSINESS_ID          # All business Pages (owned + client)
+trak account list --source facebook
+trak account get --source facebook --kind page --id sahaja
+trak account get --source facebook --kind ad_account --id luan
+trak account use sahaja --source facebook --kind page
+trak account use luan --source facebook --kind ad_account
 ```
 
-### Page Posts
+### Content
+
 ```bash
-trak page posts list --limit 10                          # Recent posts (uses default Page)
-trak page posts list --page PAGE_ID --limit 10           # Specific Page
-trak page posts list --page sahaja --limit 10            # Alias also works
-trak page posts list --limit 10 --json                   # JSON output for AI
-trak page posts get --page PAGE_ID --post POST_ID        # Single post details
-trak page posts stats --limit 10                         # Post performance stats
-trak page posts stats --page PAGE_ID --limit 20 --json   # Stats as JSON
-trak page posts insights --post POST_ID                  # Rich insights for one post
-trak page posts insights --limit 10 --json               # Rich insights for recent posts
-trak page posts compare --post POST_A --other-post POST_B
+trak content list --source facebook --account sahaja --limit 5
+trak content get --source facebook --account sahaja --id PAGE_POST_ID
+trak content stats --source facebook --account sahaja --limit 10
+trak content compare --source facebook --account sahaja --id POST_A --other-id POST_B
 ```
 
-Stats fields: share_count, post_impressions_unique, post_clicks, post_reactions_like_total, post_video_views
+### Campaign
 
-Useful Page insight metrics:
-- post_impressions
-- post_impressions_unique
-- post_clicks
-- post_engaged_users
-- post_reactions_like_total
-- post_reactions_love_total
-- post_reactions_wow_total
-- post_reactions_haha_total
-- post_reactions_sorry_total
-- post_reactions_anger_total
-- post_video_views
-
-### Personal Posts
 ```bash
-trak user posts list --limit 10
-trak user posts list --since 2026-02-01T00:00:00Z --until 2026-02-28T23:59:59Z --json
-trak user posts get --post POST_ID
+trak campaign list --source facebook --account luan
+trak campaign stats --source facebook --account luan --level campaign --date-preset last_7d
+trak campaign get --source facebook --account luan --id CAMPAIGN_ID
+trak campaign ad list --source facebook --account luan --campaign CAMPAIGN_ID
 ```
 
-Important:
-- read-only only
-- for personal profile posts, not Page posts
-- do not promise full Page-like insight metrics here
+### Report
 
-### Schedule Posts
 ```bash
-trak page posts schedule \
-  --page PAGE_ID \
-  --message "Post text" \
-  --at "2026-03-01T09:00:00+07:00" \
-  --link "https://example.com"
-
-# Dry run first (preview, no actual post)
-trak page posts schedule \
-  --page PAGE_ID \
-  --message "Post text" \
-  --at "2026-03-01T09:00:00+07:00" \
-  --dry-run
+trak report daily --source facebook
+trak report weekly --source facebook
+trak report summary --source facebook --account sahaja --from 2026-03-01 --to 2026-03-03
+trak report top-content --source facebook --account sahaja --limit 5
 ```
 
-Rules: min 10 minutes ahead, max 30 days ahead.
+### Publish
 
-### Ad Accounts
 ```bash
-trak ads account list                                    # List ad accounts
+trak publish preview --source facebook --account sahaja --message "Hello" --at "2026-03-10T09:00:00+07:00"
+trak publish schedule --source facebook --account sahaja --message "Hello" --at "2026-03-10T09:00:00+07:00"
 ```
 
-### Ad Insights
+## Provider-Specific Facebook Commands
+
+Use these when the user needs Meta/Facebook-only features.
+
 ```bash
-trak ads insights \
-  --account AD_ACCOUNT_ID \
-  --level campaign \
-  --date-preset last_7d \
-  --fields spend,impressions,reach,clicks,ctr,cpm
+trak facebook page list
+trak facebook page resolve --page SahajaVietnam
+trak facebook page posts list --page sahaja --limit 10
+trak facebook page posts stats --page sahaja --limit 10
+trak facebook page posts insights --page sahaja --limit 10
+trak facebook page posts compare --page sahaja --post POST_A --other-post POST_B
+trak facebook page posts schedule --page sahaja --message "Hello" --at "2026-03-10T09:00:00+07:00"
 
-# Default ad account also works
-trak ads insights \
-  --level campaign \
-  --date-preset last_7d
+trak facebook user posts list --limit 10
+trak facebook user posts get --post POST_ID
 
-# Alias also works
-trak ads insights \
-  --account luan \
-  --level campaign \
-  --date-preset last_7d
+trak facebook ads account list
+trak facebook ads campaigns list --account luan
+trak facebook ads insights --account luan --level campaign --date-preset last_7d
+trak facebook ads create campaign --account luan --name "Traffic test" --objective OUTCOME_TRAFFIC
+trak facebook ads create adset --account luan --campaign CAMPAIGN_ID --name "VN ad set" --daily-budget 200000 --billing-event IMPRESSIONS --optimization-goal LINK_CLICKS --targeting-file ./targeting.json
+trak facebook ads create creative --account luan --page sahaja --name "Creative 1" --message "Check this out" --link "https://example.com"
+trak facebook ads create ad --account luan --adset ADSET_ID --creative CREATIVE_ID --name "Ad 1"
 
-# Filter to one campaign
-trak ads insights \
-  --account AD_ACCOUNT_ID \
-  --level campaign \
-  --campaign-id CAMPAIGN_ID \
-  --date-preset today
-
-# Filter ad rows inside one campaign
-trak ads insights \
-  --account AD_ACCOUNT_ID \
-  --level ad \
-  --campaign-id CAMPAIGN_ID \
-  --status ACTIVE \
-  --date-preset last_7d \
-  --json
-
-# JSON for AI analysis
-trak ads insights \
-  --account AD_ACCOUNT_ID \
-  --level campaign \
-  --date-preset last_7d \
-  --json
+trak facebook business list
+trak facebook business pages list --business BUSINESS_ID --owned
 ```
 
-Levels: account, campaign, adset, ad
-Date presets: today, yesterday, last_7d, last_14d, last_30d, this_month, last_month
+## Aliases
 
-### List Campaigns
-```bash
-trak ads campaigns list --account AD_ACCOUNT_ID
+Page and ad account aliases live in config.
+
+Example:
+
+```toml
+[aliases.pages]
+sahaja = "1548373332058326"
+
+[aliases.ad_accounts]
+luan = "1243158725700119"
 ```
 
-### Create Ads (all created PAUSED)
+Manage aliases:
+
 ```bash
-# Campaign
-trak ads create campaign \
-  --account AD_ACCOUNT_ID \
-  --name "Campaign name" \
-  --objective OUTCOME_TRAFFIC
-
-# Ad Set
-trak ads create adset \
-  --account AD_ACCOUNT_ID \
-  --campaign CAMPAIGN_ID \
-  --name "Ad set name" \
-  --daily-budget 200000 \
-  --billing-event IMPRESSIONS \
-  --optimization-goal LINK_CLICKS \
-  --targeting-file ./targeting.json
-
-# Creative
-trak ads create creative \
-  --account AD_ACCOUNT_ID \
-  --name "Creative name" \
-  --page PAGE_ID \
-  --message "Ad copy" \
-  --link "https://example.com"
-
-# Ad
-trak ads create ad \
-  --account AD_ACCOUNT_ID \
-  --adset ADSET_ID \
-  --creative CREATIVE_ID \
-  --name "Ad name"
-```
-
-### Config
-```bash
-trak config init
-trak doctor
-trak doctor --live
-trak config show
-trak config set --app-id APP_ID
-trak config set --default-page PAGE_ID
-trak config set --default-ad-account AD_ACCOUNT_ID
 trak config alias list
-trak config alias set --page sahaja --value PAGE_ID
-trak config alias set --account luan --value AD_ACCOUNT_ID
+trak config alias set --page sahaja --value 1548373332058326
+trak config alias set --account luan --value 1243158725700119
 trak config alias rename --page sahaja --to sahaja-yoga
 trak config alias remove --account luan
 ```
 
-Preferred:
-- edit `~/.config/trak/config.toml`
-
-Avoid:
-- `trak config set --app-secret ...`
-Reason: shell history may log the secret.
-
 ## JSON Output
 
-Add `--json` to any command for machine-readable output:
+Add `--json` for AI-friendly output:
+
 ```bash
-trak page posts list --limit 5 --json
-trak ads insights --account 123 --level campaign --date-preset last_7d --json
+trak content stats --source facebook --account sahaja --limit 5 --json
+trak campaign stats --source facebook --account luan --level campaign --date-preset last_7d --json
+trak report top-content --source facebook --account sahaja --json
 ```
 
-## Common Workflows
+## Troubleshooting
 
-### Quick performance check
+If Page metrics are blank:
+
 ```bash
-trak page posts insights --limit 10
-trak page posts insights --page sahaja --limit 10
-trak page posts compare --post PAGE_POST_A --other-post PAGE_POST_B
-trak ads insights --account luan --level campaign --date-preset last_7d
+trak doctor --live --page PAGE_ID
+trak auth login
 ```
 
-### Check personal timeline posts
-```bash
-trak user posts list --limit 10
-trak user posts get --post POST_ID
-```
+Most common cause:
+- missing `read_insights`
 
-### Fix auth problems
-```bash
-trak auth status
-trak doctor --live
-trak auth refresh
-```
+If user needs old root examples like `trak page ...` or `trak ads ...`:
+- correct them to `trak facebook page ...`
+- correct them to `trak facebook ads ...`
 
-If `trak doctor --live` shows missing permissions:
-- run `trak auth login` again
-- approve the missing permissions in Meta
-- run `trak doctor --live` again
+## Current Limits
 
-If Page post performance returns `null` for all metrics:
-- check `trak doctor --live --page PAGE_ID`
-- most common cause: missing `read_insights`
-- after re-login, rerun `trak page posts insights ...`
-
-### Pull data for AI analysis
-```bash
-trak page posts list --limit 20 --json > posts.json
-trak page posts insights --limit 20 --json > post-insights.json
-trak user posts list --limit 20 --json > user-posts.json
-trak ads insights --account 123 --level campaign --date-preset last_30d --json > ads.json
-```
-
-### Find a Page that doesn't appear in page list
-```bash
-trak business list
-trak business pages list --business BUSINESS_ID --owned
-trak page resolve --page PAGE_USERNAME
-```
-
-## Known Limitations
-
-- Some Pages return blank values for insight fields (Meta API limitation, not a CLI bug)
-- Personal posts are read-only and do not promise Page-like insights
-- Image upload for ad creatives not built yet
-- Only Meta/Facebook supported (more platforms planned)
+- only Facebook is implemented now
+- Instagram, Threads, and GA are placeholders now
+- personal profile posts are read-only
+- some Meta insight fields may be blank depending on token/Page access

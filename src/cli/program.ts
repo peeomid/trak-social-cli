@@ -34,6 +34,7 @@ import { dryRunNotice } from "../guards/confirm.js";
 import { parsePositiveInteger, requireValue, validateScheduleTime } from "../guards/validate.js";
 import { renderOutput } from "../output/render.js";
 import { resolveAdAccountRef, resolvePageRef } from "./ref-resolver.js";
+import { assertImplementedSource, getSourceCapabilities, resolveSource, supportedSources } from "./source-registry.js";
 import { loadConfig, saveConfig } from "../store/config.js";
 import { getConfigPath } from "../store/paths.js";
 import { clearSecretStore, loadSecretStore, saveSecretStore } from "../store/secret-store.js";
@@ -45,13 +46,14 @@ import type {
   CreativeCreateInput,
   InsightsLevel,
   MetaConfig,
+  SupportedSource,
 } from "../types/models.js";
 
 export function buildProgram(): Command {
   const program = new Command();
   program
     .name("trak")
-    .description("Social publishing and marketing CLI. Start with config, then auth, then page or ads commands.")
+    .description("Multi-source tracking CLI for content, campaigns, reports, and publishing.")
     .option("--json", "Output JSON");
   program.addHelpText(
     "after",
@@ -59,22 +61,21 @@ export function buildProgram(): Command {
 Setup order:
   1. Edit ~/.config/trak/config.toml
   2. trak auth login
-  3. trak business list
-  4. trak page resolve --page SahajaVietnam
-  5. trak page posts list --limit 5
+  3. trak account list --source facebook
+  4. trak content list --source facebook --account main --limit 5
+  5. trak report top-content --source facebook --account main
   6. trak doctor
 
 Common examples:
+  trak source list
   trak config show
   trak doctor
   trak auth status
-  trak page posts insights --limit 10
-  trak page posts insights --page main --limit 10
-  trak page posts compare --post PAGE_POST_A --other-post PAGE_POST_B
-  trak user posts list --limit 10
-  trak ads account list
-  trak ads insights --account 1243158725700119 --level campaign --date-preset last_7d
-  trak ads insights --account ads1 --level campaign --date-preset last_7d
+  trak account list --source facebook
+  trak content stats --source facebook --account main --limit 10
+  trak content compare --source facebook --account main --id POST_A --other-id POST_B
+  trak campaign stats --source facebook --account luan --date-preset last_7d
+  trak report daily --source facebook
 
 Tip:
   Use --json when sending output to AI tools like OpenClaw.
@@ -82,10 +83,16 @@ Tip:
   );
 
   addAuthCommands(program);
-  addPageCommands(program);
-  addUserCommands(program);
-  addAdsCommands(program);
-  addBusinessCommands(program);
+  addSourceCommands(program);
+  addAccountCommands(program);
+  addContentCommands(program);
+  addCampaignCommands(program);
+  addReportCommands(program);
+  addPublishCommands(program);
+  addFacebookCommands(program);
+  addInstagramCommands(program);
+  addThreadsCommands(program);
+  addGaCommands(program);
   addConfigCommands(program);
   addDoctorCommand(program);
   return program;
@@ -210,25 +217,586 @@ Example:
     });
 }
 
+function addSourceCommands(program: Command): void {
+  const source = program.command("source").description("Inspect supported data sources");
+
+  source
+    .command("list")
+    .description("List known sources")
+    .action(() => {
+      render(loadConfig(), supportedSources.map((name) => getSourceCapabilities(name)));
+    });
+
+  source
+    .command("capabilities")
+    .requiredOption("--source <source>", "Source name")
+    .description("Show feature support for one source")
+    .action((options) => {
+      const sourceName = resolveSource(options.source);
+      render(loadConfig(), getSourceCapabilities(sourceName));
+    });
+
+  source
+    .command("status")
+    .requiredOption("--source <source>", "Source name")
+    .description("Show implementation status for one source")
+    .action((options) => {
+      const sourceName = resolveSource(options.source);
+      const capabilities = getSourceCapabilities(sourceName);
+      render(loadConfig(), {
+        source: sourceName,
+        implemented: capabilities.implemented,
+        notes: capabilities.notes,
+      });
+    });
+}
+
+function addAccountCommands(program: Command): void {
+  const account = program.command("account").description("Inspect accounts/assets across sources");
+
+  account
+    .command("list")
+    .option("--source <source>", "Source name", "facebook")
+    .description("List connected accounts/assets")
+    .action(async (options) => {
+      const sourceName = resolveSource(options.source);
+      assertImplementedSource(sourceName);
+      const config = loadConfig();
+      const tokenStore = loadTokenStore();
+      const secretStore = loadSecretStore();
+      render(config, await listFacebookAccountsOutput(config, tokenStore, secretStore));
+    });
+
+  account
+    .command("get")
+    .requiredOption("--id <id>", "Account or asset id")
+    .option("--source <source>", "Source name", "facebook")
+    .option("--kind <kind>", "page | ad_account")
+    .description("Get one account/asset")
+    .action(async (options) => {
+      const sourceName = resolveSource(options.source);
+      assertImplementedSource(sourceName);
+      const config = loadConfig();
+      const tokenStore = loadTokenStore();
+      const secretStore = loadSecretStore();
+      const row = await getFacebookAccountOutput(config, tokenStore, secretStore, options.id, options.kind);
+      render(config, row);
+    });
+
+  account
+    .command("use")
+    .argument("<alias>", "Saved alias name")
+    .option("--source <source>", "Source name", "facebook")
+    .option("--kind <kind>", "page | ad_account")
+    .description("Set one saved alias as the default account")
+    .action((alias, options) => {
+      const sourceName = resolveSource(options.source);
+      assertImplementedSource(sourceName);
+      const config = loadConfig();
+      const kind = options.kind === "ad_account" ? "ad_account" : "page";
+      if (kind === "page") {
+        const value = config.pageAliases[alias];
+        if (!value) {
+          throw new Error(`Unknown page alias: ${alias}`);
+        }
+        const next = { ...config, defaultPageId: value };
+        saveConfig(next);
+        render(next, { status: "updated", source: sourceName, kind, alias, value });
+        return;
+      }
+
+      const value = config.adAccountAliases[alias];
+      if (!value) {
+        throw new Error(`Unknown ad account alias: ${alias}`);
+      }
+      const next = { ...config, defaultAdAccountId: value };
+      saveConfig(next);
+      render(next, { status: "updated", source: sourceName, kind, alias, value });
+    });
+}
+
+function addContentCommands(program: Command): void {
+  const content = program.command("content").description("Inspect content across sources");
+
+  content
+    .command("list")
+    .option("--source <source>", "Source name", "facebook")
+    .option("--account <ref>", "Account id or alias")
+    .option("--since <iso>", "Start time")
+    .option("--until <iso>", "End time")
+    .option("--limit <limit>", "Row limit", "20")
+    .description("List content items")
+    .action(async (options) => {
+      const sourceName = resolveSource(options.source);
+      assertImplementedSource(sourceName);
+      const config = loadConfig();
+      const tokenStore = loadTokenStore();
+      const secretStore = loadSecretStore();
+      const pageId = await resolveAndCachePageId(config, tokenStore, secretStore, options.account);
+      const response = await listPosts(config, tokenStore, secretStore, {
+        pageId,
+        since: options.since,
+        until: options.until,
+        limit: parsePositiveInteger(options.limit, "--limit"),
+      });
+      render(
+        config,
+        response.data.map((row) => ({
+          source: sourceName,
+          kind: "post",
+          account_id: pageId,
+          id: row.id,
+          text: row.message ?? "",
+          created_at: row.created_time ?? "",
+          url: row.permalink_url ?? "",
+        })),
+      );
+    });
+
+  content
+    .command("get")
+    .requiredOption("--id <id>", "Content id")
+    .option("--source <source>", "Source name", "facebook")
+    .option("--account <ref>", "Account id or alias")
+    .description("Get one content item")
+    .action(async (options) => {
+      const sourceName = resolveSource(options.source);
+      assertImplementedSource(sourceName);
+      const config = loadConfig();
+      const tokenStore = loadTokenStore();
+      const secretStore = loadSecretStore();
+      const pageId = await resolveAndCachePageId(config, tokenStore, secretStore, options.account);
+      const response = await getPost(config, tokenStore, secretStore, {
+        pageId,
+        postId: options.id,
+      });
+      render(config, {
+        source: sourceName,
+        kind: "post",
+        account_id: pageId,
+        id: response.id,
+        text: response.message ?? "",
+        created_at: response.created_time ?? "",
+        url: response.permalink_url ?? "",
+        raw: process.argv.includes("--json") ? response : undefined,
+      });
+    });
+
+  content
+    .command("stats")
+    .option("--source <source>", "Source name", "facebook")
+    .option("--account <ref>", "Account id or alias")
+    .option("--limit <limit>", "Row limit", "10")
+    .description("Show content performance")
+    .action(async (options) => {
+      const sourceName = resolveSource(options.source);
+      assertImplementedSource(sourceName);
+      const config = loadConfig();
+      const tokenStore = loadTokenStore();
+      const secretStore = loadSecretStore();
+      const pageId = await resolveAndCachePageId(config, tokenStore, secretStore, options.account);
+      const rows = await listPostStats(config, tokenStore, secretStore, {
+        pageId,
+        limit: parsePositiveInteger(options.limit, "--limit"),
+      });
+      render(
+        config,
+        rows.map((row) => ({
+          source: sourceName,
+          kind: "post",
+          account_id: pageId,
+          ...row,
+        })),
+      );
+    });
+
+  content
+    .command("compare")
+    .requiredOption("--id <id>", "Left content id")
+    .requiredOption("--other-id <id>", "Right content id")
+    .option("--source <source>", "Source name", "facebook")
+    .option("--account <ref>", "Account id or alias")
+    .option("--metrics <metrics>", "Comma-separated metrics")
+    .option("--date-preset <preset>", "Date preset")
+    .option("--since <iso>", "Start time")
+    .option("--until <iso>", "End time")
+    .option("--period <period>", "day | week | days_28 | month | lifetime | total_over_range", "lifetime")
+    .option("--include-message", "Show full content text")
+    .description("Compare two content items")
+    .action(async (options) => {
+      const sourceName = resolveSource(options.source);
+      assertImplementedSource(sourceName);
+      const config = loadConfig();
+      const tokenStore = loadTokenStore();
+      const secretStore = loadSecretStore();
+      const pageId = await resolveAndCachePageId(config, tokenStore, secretStore, options.account);
+      const metrics = resolvePageInsightMetrics(options.metrics);
+      const period = validatePageInsightsPeriod(options.period);
+      const time = buildPageInsightsTimeInput(options);
+      const comparison = await comparePagePostInsights(config, tokenStore, secretStore, {
+        pageId,
+        postId: options.id,
+        otherPostId: options.otherId,
+        metrics,
+        period,
+        includeMessage: Boolean(options.includeMessage),
+        ...time,
+      });
+      const output = formatPageComparisonOutput(comparison, metrics, period, time, pageId);
+      render(
+        config,
+        process.argv.includes("--json")
+          ? { source: sourceName, ...(output as Record<string, unknown>) }
+          : output,
+      );
+    });
+}
+
+function addCampaignCommands(program: Command): void {
+  const campaign = program.command("campaign").description("Inspect paid campaigns across sources");
+
+  campaign
+    .command("list")
+    .option("--source <source>", "Source name", "facebook")
+    .option("--account <ref>", "Account id or alias")
+    .option("--status <status>", "Filter status")
+    .description("List campaigns")
+    .action(async (options) => {
+      const sourceName = resolveSource(options.source);
+      assertImplementedSource(sourceName);
+      const config = loadConfig();
+      const tokenStore = loadTokenStore();
+      const secretStore = loadSecretStore();
+      const adAccountId = resolveAdAccountRef(config, options.account);
+      const response = await listCampaigns(config, tokenStore, secretStore, adAccountId, options.status);
+      render(
+        config,
+        response.data.map((row) => ({
+          source: sourceName,
+          kind: "campaign",
+          account_id: adAccountId,
+          ...row,
+        })),
+      );
+    });
+
+  campaign
+    .command("stats")
+    .option("--source <source>", "Source name", "facebook")
+    .option("--account <ref>", "Account id or alias")
+    .option("--level <level>", "account | campaign | adset | ad", "campaign")
+    .option("--date-preset <preset>", "Date preset", "last_7d")
+    .option("--fields <fields>", "Comma-separated fields", "spend,impressions,reach,clicks,ctr,cpm,campaign_name")
+    .option("--campaign-id <id>", "Filter by campaign id")
+    .option("--adset-id <id>", "Filter by ad set id")
+    .option("--ad-id <id>", "Filter by ad id")
+    .option("--status <status>", "Filter by effective status")
+    .option("--limit <limit>", "Row limit", "100")
+    .description("Show campaign/ad performance")
+    .action(async (options) => {
+      const sourceName = resolveSource(options.source);
+      assertImplementedSource(sourceName);
+      const config = loadConfig();
+      const tokenStore = loadTokenStore();
+      const secretStore = loadSecretStore();
+      const adAccountId = resolveAdAccountRef(config, options.account);
+      const response = await getInsights(config, tokenStore, secretStore, {
+        adAccountId,
+        level: options.level as InsightsLevel,
+        datePreset: options.datePreset,
+        fields: String(options.fields)
+          .split(",")
+          .map((value) => value.trim())
+          .filter(Boolean),
+        campaignId: options.campaignId,
+        adSetId: options.adsetId,
+        adId: options.adId,
+        effectiveStatus: options.status,
+        limit: parsePositiveInteger(options.limit, "--limit"),
+      });
+      render(
+        config,
+        response.data.map((row) => ({
+          source: sourceName,
+          level: options.level,
+          account_id: adAccountId,
+          ...row,
+        })),
+      );
+    });
+
+  campaign
+    .command("get")
+    .requiredOption("--id <id>", "Campaign id")
+    .option("--source <source>", "Source name", "facebook")
+    .option("--account <ref>", "Account id or alias")
+    .description("Get one campaign")
+    .action(async (options) => {
+      const sourceName = resolveSource(options.source);
+      assertImplementedSource(sourceName);
+      const config = loadConfig();
+      const tokenStore = loadTokenStore();
+      const secretStore = loadSecretStore();
+      const adAccountId = resolveAdAccountRef(config, options.account);
+      const response = await listCampaigns(config, tokenStore, secretStore, adAccountId);
+      const row = response.data.find((item) => String(item.id) === String(options.id));
+      if (!row) {
+        throw new Error(`Campaign not found: ${options.id}`);
+      }
+      render(config, {
+        source: sourceName,
+        kind: "campaign",
+        account_id: adAccountId,
+        ...row,
+      });
+    });
+
+  const ad = campaign.command("ad").description("Campaign ad commands");
+  ad
+    .command("list")
+    .requiredOption("--campaign <id>", "Campaign id")
+    .option("--source <source>", "Source name", "facebook")
+    .option("--account <ref>", "Account id or alias")
+    .option("--date-preset <preset>", "Date preset", "last_7d")
+    .option("--status <status>", "Filter by effective status")
+    .option(
+      "--fields <fields>",
+      "Comma-separated fields",
+      "campaign_name,adset_name,ad_name,spend,impressions,reach,clicks,ctr,cpm",
+    )
+    .option("--limit <limit>", "Row limit", "100")
+    .description("List ads inside one campaign")
+    .action(async (options) => {
+      const sourceName = resolveSource(options.source);
+      assertImplementedSource(sourceName);
+      const config = loadConfig();
+      const tokenStore = loadTokenStore();
+      const secretStore = loadSecretStore();
+      const adAccountId = resolveAdAccountRef(config, options.account);
+      const response = await getInsights(config, tokenStore, secretStore, {
+        adAccountId,
+        level: "ad",
+        datePreset: options.datePreset,
+        fields: String(options.fields)
+          .split(",")
+          .map((value) => value.trim())
+          .filter(Boolean),
+        campaignId: options.campaign,
+        effectiveStatus: options.status,
+        limit: parsePositiveInteger(options.limit, "--limit"),
+      });
+      render(
+        config,
+        response.data.map((row) => ({
+          source: sourceName,
+          level: "ad",
+          account_id: adAccountId,
+          ...row,
+        })),
+      );
+    });
+}
+
+function addReportCommands(program: Command): void {
+  const report = program.command("report").description("Summaries and rollups across sources");
+
+  report
+    .command("daily")
+    .option("--source <source>", "Source name", "facebook")
+    .option("--account <ref>", "Account id or alias")
+    .description("Show today summary")
+    .action(async (options) => {
+      const config = loadConfig();
+      render(config, await buildFacebookReport(resolveSource(options.source), options.account, "today"));
+    });
+
+  report
+    .command("weekly")
+    .option("--source <source>", "Source name", "facebook")
+    .option("--account <ref>", "Account id or alias")
+    .description("Show last 7 days summary")
+    .action(async (options) => {
+      const config = loadConfig();
+      render(config, await buildFacebookReport(resolveSource(options.source), options.account, "last_7d"));
+    });
+
+  report
+    .command("summary")
+    .option("--source <source>", "Source name", "facebook")
+    .option("--account <ref>", "Account id or alias")
+    .option("--from <date>", "Start date")
+    .option("--to <date>", "End date")
+    .description("Show summary for a date range")
+    .action(async (options) => {
+      const sourceName = resolveSource(options.source);
+      assertImplementedSource(sourceName);
+      const config = loadConfig();
+      const tokenStore = loadTokenStore();
+      const secretStore = loadSecretStore();
+      const pageId = await resolveAndCachePageId(config, tokenStore, secretStore, options.account);
+      const posts = await listPagePostInsights(config, tokenStore, secretStore, {
+        pageId,
+        limit: 10,
+        metrics: getDefaultPagePostInsightMetrics(),
+        period: "lifetime",
+        since: options.from,
+        until: options.to,
+      });
+      render(config, {
+        source: sourceName,
+        window: {
+          from: options.from ?? null,
+          to: options.to ?? null,
+        },
+        summary: summarizeFacebookContent(posts),
+        top_items: posts.slice(0, 5).map((row) => flattenPageInsightsRow(row, getDefaultPagePostInsightMetrics())),
+      });
+    });
+
+  report
+    .command("top-content")
+    .option("--source <source>", "Source name", "facebook")
+    .option("--account <ref>", "Account id or alias")
+    .option("--limit <limit>", "Row limit", "5")
+    .description("Show top content by reach/clicks")
+    .action(async (options) => {
+      const sourceName = resolveSource(options.source);
+      assertImplementedSource(sourceName);
+      const config = loadConfig();
+      const tokenStore = loadTokenStore();
+      const secretStore = loadSecretStore();
+      const pageId = await resolveAndCachePageId(config, tokenStore, secretStore, options.account);
+      const rows = await listPostStats(config, tokenStore, secretStore, {
+        pageId,
+        limit: parsePositiveInteger(options.limit, "--limit"),
+      });
+      const sorted = [...rows].sort(
+        (left, right) =>
+          Number(right.post_impressions_unique ?? 0) - Number(left.post_impressions_unique ?? 0) ||
+          Number(right.post_clicks ?? 0) - Number(left.post_clicks ?? 0),
+      );
+      render(
+        config,
+        sorted.map((row, index) => ({
+          rank: index + 1,
+          source: sourceName,
+          account_id: pageId,
+          ...row,
+        })),
+      );
+    });
+}
+
+function addPublishCommands(program: Command): void {
+  const publish = program.command("publish").description("Publishing and scheduling across sources");
+
+  publish
+    .command("schedule")
+    .option("--source <source>", "Source name", "facebook")
+    .option("--account <ref>", "Account id or alias")
+    .requiredOption("--message <message>", "Post message")
+    .requiredOption("--at <time>", "Scheduled ISO time")
+    .option("--link <url>", "Optional link")
+    .description("Schedule content")
+    .action(async (options) => {
+      const sourceName = resolveSource(options.source);
+      assertImplementedSource(sourceName);
+      const config = loadConfig();
+      const tokenStore = loadTokenStore();
+      const secretStore = loadSecretStore();
+      const pageId = await resolveAndCachePageId(config, tokenStore, secretStore, options.account);
+      const scheduledTime = validateScheduleTime(options.at);
+      const payload = {
+        pageId,
+        message: options.message,
+        scheduledPublishTime: scheduledTime.toISOString(),
+        link: options.link,
+      };
+      const response = await schedulePost(config, tokenStore, secretStore, payload);
+      render(config, {
+        source: sourceName,
+        status: "scheduled",
+        ...response,
+        scheduledPublishTime: payload.scheduledPublishTime,
+      });
+    });
+
+  publish
+    .command("preview")
+    .option("--source <source>", "Source name", "facebook")
+    .option("--account <ref>", "Account id or alias")
+    .requiredOption("--message <message>", "Post message")
+    .requiredOption("--at <time>", "Scheduled ISO time")
+    .option("--link <url>", "Optional link")
+    .description("Preview scheduled publish payload")
+    .action(async (options) => {
+      const sourceName = resolveSource(options.source);
+      assertImplementedSource(sourceName);
+      const config = loadConfig();
+      const tokenStore = loadTokenStore();
+      const secretStore = loadSecretStore();
+      const pageId = await resolveAndCachePageId(config, tokenStore, secretStore, options.account);
+      const scheduledTime = validateScheduleTime(options.at);
+      render(config, {
+        source: sourceName,
+        status: "preview",
+        pageId,
+        message: options.message,
+        scheduledPublishTime: scheduledTime.toISOString(),
+        link: options.link ?? null,
+      });
+    });
+}
+
+function addFacebookCommands(program: Command): void {
+  const facebook = program.command("facebook").description("Facebook provider-specific commands");
+  addPageCommands(facebook);
+  addUserCommands(facebook);
+  addAdsCommands(facebook);
+  addBusinessCommands(facebook);
+}
+
+function addInstagramCommands(program: Command): void {
+  addPlaceholderProviderCommands(program, "instagram", "Instagram provider commands");
+}
+
+function addThreadsCommands(program: Command): void {
+  addPlaceholderProviderCommands(program, "threads", "Threads provider commands");
+}
+
+function addGaCommands(program: Command): void {
+  addPlaceholderProviderCommands(program, "ga", "Google Analytics provider commands");
+}
+
+function addPlaceholderProviderCommands(program: Command, source: SupportedSource, description: string): void {
+  const provider = program.command(source).description(description);
+  provider
+    .command("capabilities")
+    .description("Show planned capabilities")
+    .action(() => {
+      render(loadConfig(), getSourceCapabilities(source));
+    });
+}
+
 function addPageCommands(program: Command): void {
   const page = program.command("page").description("Facebook Page commands");
   page.addHelpText(
     "after",
     `
 Examples:
-  trak page list
-  trak page resolve --page SahajaVietnam
-  trak page resolve --page main
-  trak page posts list --page 1548373332058326 --limit 10
-  trak page posts stats --page 1548373332058326 --limit 10
-  trak page posts insights --page 1548373332058326 --limit 10
-  trak page posts schedule --page 1548373332058326 --message "Hello" --at "2026-03-01T09:00:00+07:00"
+  trak facebook page list
+  trak facebook page resolve --page SahajaVietnam
+  trak facebook page resolve --page main
+  trak facebook page posts list --page 1548373332058326 --limit 10
+  trak facebook page posts stats --page 1548373332058326 --limit 10
+  trak facebook page posts insights --page 1548373332058326 --limit 10
+  trak facebook page posts schedule --page 1548373332058326 --message "Hello" --at "2026-03-01T09:00:00+07:00"
 
 Step by step:
   1. trak auth login
-  2. trak business pages list --business YOUR_BUSINESS_ID --owned
-  3. trak page resolve --page YOUR_PAGE_ID_OR_USERNAME
-  4. trak page posts list --limit 5
+  2. trak facebook business pages list --business YOUR_BUSINESS_ID --owned
+  3. trak facebook page resolve --page YOUR_PAGE_ID_OR_USERNAME
+  4. trak facebook page posts list --limit 5
 `,
   );
 
@@ -239,11 +807,11 @@ Step by step:
       "after",
       `
 Example:
-  trak page list
+  trak facebook page list
 
 If your Page is missing:
-  trak business pages list --business YOUR_BUSINESS_ID --owned
-  trak page resolve --page YOUR_PAGE_ID_OR_USERNAME
+  trak facebook business pages list --business YOUR_BUSINESS_ID --owned
+  trak facebook page resolve --page YOUR_PAGE_ID_OR_USERNAME
 `,
     )
     .action(async () => {
@@ -262,9 +830,9 @@ If your Page is missing:
       "after",
       `
 Examples:
-  trak page resolve --page SahajaVietnam
-  trak page resolve --page 1548373332058326
-  trak page resolve --page main
+  trak facebook page resolve --page SahajaVietnam
+  trak facebook page resolve --page 1548373332058326
+  trak facebook page resolve --page main
 `,
     )
     .action(async (options) => {
@@ -293,11 +861,11 @@ Examples:
     "after",
     `
 Examples:
-  trak page posts list --limit 10
-  trak page posts stats --limit 10
-  trak page posts insights --limit 10
-  trak page posts get --post 1548373332058326_1220166893652739
-  trak page posts schedule --message "New update" --at "2026-03-01T09:00:00+07:00" --dry-run
+  trak facebook page posts list --limit 10
+  trak facebook page posts stats --limit 10
+  trak facebook page posts insights --limit 10
+  trak facebook page posts get --post 1548373332058326_1220166893652739
+  trak facebook page posts schedule --message "New update" --at "2026-03-01T09:00:00+07:00" --dry-run
 `,
   );
 
@@ -312,10 +880,10 @@ Examples:
       "after",
       `
 Examples:
-  trak page posts list --page 1548373332058326 --limit 10
-  trak page posts list --page main --limit 10
-  trak page posts list --limit 10
-  trak page posts list --since 2026-02-01T00:00:00Z --until 2026-02-27T23:59:59Z
+  trak facebook page posts list --page 1548373332058326 --limit 10
+  trak facebook page posts list --page main --limit 10
+  trak facebook page posts list --limit 10
+  trak facebook page posts list --since 2026-02-01T00:00:00Z --until 2026-02-27T23:59:59Z
 
 Tip:
   If --page is missing, trak uses defaults.page_id from config.
@@ -345,9 +913,9 @@ Tip:
       "after",
       `
 Examples:
-  trak page posts stats --page 1548373332058326 --limit 10
-  trak page posts stats --page main --limit 10
-  trak page posts stats --limit 10 --json
+  trak facebook page posts stats --page 1548373332058326 --limit 10
+  trak facebook page posts stats --page main --limit 10
+  trak facebook page posts stats --limit 10 --json
 
 Current output may include blank insight fields for some Page/token combinations.
 `,
@@ -381,10 +949,10 @@ Current output may include blank insight fields for some Page/token combinations
       "after",
       `
 Examples:
-  trak page posts insights --page 1548373332058326 --post 1548373332058326_1220166893652739
-  trak page posts insights --page main --limit 10
-  trak page posts insights --limit 10
-  trak page posts insights --metrics post_impressions_unique,post_clicks
+  trak facebook page posts insights --page 1548373332058326 --post 1548373332058326_1220166893652739
+  trak facebook page posts insights --page main --limit 10
+  trak facebook page posts insights --limit 10
+  trak facebook page posts insights --metrics post_impressions_unique,post_clicks
 
 Supported metrics:
   ${getSupportedPagePostInsightMetrics().join(", ")}
@@ -443,9 +1011,9 @@ Supported metrics:
       "after",
       `
 Examples:
-  trak page posts compare --post 123_1 --other-post 123_2
-  trak page posts compare --page main --post 123_1 --other-post 123_2
-  trak page posts compare --page 1548373332058326 --post 123_1 --other-post 123_2 --metrics post_clicks,post_impressions_unique
+  trak facebook page posts compare --post 123_1 --other-post 123_2
+  trak facebook page posts compare --page main --post 123_1 --other-post 123_2
+  trak facebook page posts compare --page 1548373332058326 --post 123_1 --other-post 123_2 --metrics post_clicks,post_impressions_unique
 `,
     )
     .action(async (options) => {
@@ -477,8 +1045,8 @@ Examples:
       "after",
       `
 Example:
-  trak page posts get --page 1548373332058326 --post 1548373332058326_1220166893652739
-  trak page posts get --page main --post 1548373332058326_1220166893652739
+  trak facebook page posts get --page 1548373332058326 --post 1548373332058326_1220166893652739
+  trak facebook page posts get --page main --post 1548373332058326_1220166893652739
 `,
     )
     .action(async (options) => {
@@ -505,9 +1073,9 @@ Example:
       "after",
       `
 Examples:
-  trak page posts schedule --page 1548373332058326 --message "Hello" --at "2026-03-01T09:00:00+07:00"
-  trak page posts schedule --page main --message "Hello" --at "2026-03-01T09:00:00+07:00"
-  trak page posts schedule --message "Hello" --at "2026-03-01T09:00:00+07:00" --dry-run
+  trak facebook page posts schedule --page 1548373332058326 --message "Hello" --at "2026-03-01T09:00:00+07:00"
+  trak facebook page posts schedule --page main --message "Hello" --at "2026-03-01T09:00:00+07:00"
+  trak facebook page posts schedule --message "Hello" --at "2026-03-01T09:00:00+07:00" --dry-run
 
 Meta rule:
   Time must be between 10 minutes and 30 days in the future.
@@ -545,8 +1113,8 @@ function addUserCommands(program: Command): void {
     "after",
     `
 Examples:
-  trak user posts list --limit 10
-  trak user posts get --post 123456789
+  trak facebook user posts list --limit 10
+  trak facebook user posts get --post 123456789
 
 Note:
   Personal posts are read-only in trak.
@@ -564,8 +1132,8 @@ Note:
       "after",
       `
 Examples:
-  trak user posts list --limit 10
-  trak user posts list --since 2026-02-01T00:00:00Z --until 2026-02-28T23:59:59Z
+  trak facebook user posts list --limit 10
+  trak facebook user posts list --since 2026-02-01T00:00:00Z --until 2026-02-28T23:59:59Z
 `,
     )
     .action(async (options) => {
@@ -588,7 +1156,7 @@ Examples:
       "after",
       `
 Example:
-  trak user posts get --post 123456789
+  trak facebook user posts get --post 123456789
 `,
     )
     .action(async (options) => {
@@ -606,11 +1174,11 @@ function addAdsCommands(program: Command): void {
     "after",
     `
 Examples:
-  trak ads account list
-  trak ads campaigns list
-  trak ads insights --level campaign --date-preset last_7d
-  trak ads insights --account ads1 --level campaign --date-preset last_7d
-  trak ads create campaign --name "Traffic test" --objective OUTCOME_TRAFFIC
+  trak facebook ads account list
+  trak facebook ads campaigns list
+  trak facebook ads insights --level campaign --date-preset last_7d
+  trak facebook ads insights --account ads1 --level campaign --date-preset last_7d
+  trak facebook ads create campaign --name "Traffic test" --objective OUTCOME_TRAFFIC
 
 Safe default:
   Ad creation commands create paused resources first.
@@ -625,7 +1193,7 @@ Safe default:
       "after",
       `
 Example:
-  trak ads account list
+  trak facebook ads account list
 `,
     )
     .action(async () => {
@@ -658,11 +1226,11 @@ Example:
       "after",
       `
 Examples:
-  trak ads insights --level account --date-preset last_7d
-  trak ads insights --account ads1 --level account --date-preset last_7d
-  trak ads insights --account 1243158725700119 --level campaign --fields spend,impressions,clicks,ctr,cpm --json
-  trak ads insights --account 1243158725700119 --level campaign --campaign-id 6908777851014 --date-preset today
-  trak ads insights --account 1243158725700119 --level ad --campaign-id 6908777851014 --status ACTIVE --date-preset last_7d --json
+  trak facebook ads insights --level account --date-preset last_7d
+  trak facebook ads insights --account ads1 --level account --date-preset last_7d
+  trak facebook ads insights --account 1243158725700119 --level campaign --fields spend,impressions,clicks,ctr,cpm --json
+  trak facebook ads insights --account 1243158725700119 --level campaign --campaign-id 6908777851014 --date-preset today
+  trak facebook ads insights --account 1243158725700119 --level ad --campaign-id 6908777851014 --status ACTIVE --date-preset last_7d --json
 `,
     )
     .action(async (options) => {
@@ -699,9 +1267,9 @@ Examples:
       "after",
       `
 Examples:
-  trak ads campaigns list
-  trak ads campaigns list --account ads1
-  trak ads campaigns list --account 1243158725700119 --status ACTIVE
+  trak facebook ads campaigns list
+  trak facebook ads campaigns list --account ads1
+  trak facebook ads campaigns list --account 1243158725700119 --status ACTIVE
 `,
     )
     .action(async (options) => {
@@ -726,8 +1294,8 @@ Examples:
       "after",
       `
 Examples:
-  trak ads create campaign --name "Traffic test" --objective OUTCOME_TRAFFIC
-  trak ads create campaign --account ads1 --name "Traffic test" --objective OUTCOME_TRAFFIC --dry-run
+  trak facebook ads create campaign --name "Traffic test" --objective OUTCOME_TRAFFIC
+  trak facebook ads create campaign --account ads1 --name "Traffic test" --objective OUTCOME_TRAFFIC --dry-run
 `,
     )
     .action(async (options) => {
@@ -768,7 +1336,7 @@ Examples:
       "after",
       `
 Example:
-  trak ads create adset --campaign 123 --name "VN ad set" --daily-budget 200000 --billing-event IMPRESSIONS --optimization-goal LINK_CLICKS --targeting-file ./targeting.json
+  trak facebook ads create adset --campaign 123 --name "VN ad set" --daily-budget 200000 --billing-event IMPRESSIONS --optimization-goal LINK_CLICKS --targeting-file ./targeting.json
 `,
     )
     .action(async (options) => {
@@ -813,7 +1381,7 @@ Example:
       "after",
       `
 Example:
-  trak ads create creative --account ads1 --name "Creative 1" --page main --message "Check this out" --link "https://example.com"
+  trak facebook ads create creative --account ads1 --name "Creative 1" --page main --message "Check this out" --link "https://example.com"
 `,
     )
     .action(async (options) => {
@@ -851,7 +1419,7 @@ Example:
       "after",
       `
 Example:
-  trak ads create ad --account ads1 --adset 123 --creative 456 --name "Ad 1"
+  trak facebook ads create ad --account ads1 --adset 123 --creative 456 --name "Ad 1"
 `,
     )
     .action(async (options) => {
@@ -883,12 +1451,12 @@ function addBusinessCommands(program: Command): void {
     "after",
     `
 Examples:
-  trak business list
-  trak business pages list --business 1242778199071505 --owned
-  trak business pages list --business 1242778199071505
+  trak facebook business list
+  trak facebook business pages list --business 1242778199071505 --owned
+  trak facebook business pages list --business 1242778199071505
 
 Use this when:
-  A Page does not appear in 'trak page list'.
+  A Page does not appear in 'trak facebook page list'.
 `,
   );
 
@@ -899,7 +1467,7 @@ Use this when:
       "after",
       `
 Example:
-  trak business list
+  trak facebook business list
 `,
     )
     .action(async () => {
@@ -921,9 +1489,9 @@ Example:
       "after",
       `
 Examples:
-  trak business pages list --business 1242778199071505 --owned
-  trak business pages list --business 1242778199071505 --client
-  trak business pages list --business 1242778199071505
+  trak facebook business pages list --business 1242778199071505 --owned
+  trak facebook business pages list --business 1242778199071505 --client
+  trak facebook business pages list --business 1242778199071505
 `,
     )
     .action(async (options) => {
@@ -1589,6 +2157,136 @@ function formatUserPostSingleOutput(row: Awaited<ReturnType<typeof getUserPost>>
     object: "user_post",
     data: row,
   };
+}
+
+async function listFacebookAccountsOutput(
+  config: MetaConfig,
+  tokenStore: ReturnType<typeof loadTokenStore>,
+  secretStore: ReturnType<typeof loadSecretStore>,
+): Promise<Array<Record<string, unknown>>> {
+  const [pages, adAccounts] = await Promise.all([
+    listPages(config, tokenStore, secretStore),
+    listAdAccounts(config, tokenStore, secretStore),
+  ]);
+
+  return [
+    ...pages.data.map((row) => ({
+      source: "facebook",
+      kind: "page",
+      id: row.id,
+      name: row.name,
+      status: "connected",
+    })),
+    ...adAccounts.data.map((row) => ({
+      source: "facebook",
+      kind: "ad_account",
+      ...row,
+    })),
+  ];
+}
+
+async function getFacebookAccountOutput(
+  config: MetaConfig,
+  tokenStore: ReturnType<typeof loadTokenStore>,
+  secretStore: ReturnType<typeof loadSecretStore>,
+  id: string,
+  kind?: string,
+): Promise<Record<string, unknown>> {
+  if (kind === "page") {
+    const pageId = await resolveAndCachePageId(config, tokenStore, secretStore, id);
+    const page = await resolvePage(config, tokenStore, secretStore, pageId);
+    return {
+      source: "facebook",
+      kind: "page",
+      id: page.id,
+      name: page.name,
+      access_token: process.argv.includes("--json") ? page.access_token ?? null : undefined,
+    };
+  }
+
+  if (kind === "ad_account") {
+    const adAccountId = resolveAdAccountRef(config, id);
+    const rows = await listAdAccounts(config, tokenStore, secretStore);
+    const row = rows.data.find((item) => String(item.id) === normalizeAdAccountId(adAccountId));
+    if (!row) {
+      throw new Error(`Ad account not found: ${id}`);
+    }
+    return {
+      source: "facebook",
+      kind: "ad_account",
+      ...row,
+    };
+  }
+
+  const rows = await listFacebookAccountsOutput(config, tokenStore, secretStore);
+  const matched = rows.find((row) => String(row.id) === id || String(row.id) === normalizeAdAccountId(id));
+  if (!matched) {
+    throw new Error(`Account not found: ${id}. Pass --kind page or --kind ad_account if needed.`);
+  }
+  return matched;
+}
+
+async function buildFacebookReport(
+  source: SupportedSource,
+  accountRef: string | undefined,
+  datePreset: string,
+): Promise<Record<string, unknown>> {
+  assertImplementedSource(source);
+  const config = loadConfig();
+  const tokenStore = loadTokenStore();
+  const secretStore = loadSecretStore();
+  const pageId = await resolveAndCachePageId(config, tokenStore, secretStore, accountRef);
+  const adAccountId = resolveAdAccountRef(config, undefined);
+  const [posts, campaignRows] = await Promise.all([
+    listPostStats(config, tokenStore, secretStore, {
+      pageId,
+      limit: 10,
+    }),
+    getInsights(config, tokenStore, secretStore, {
+      adAccountId,
+      level: "campaign",
+      datePreset,
+      fields: ["campaign_name", "spend", "impressions", "reach", "clicks", "ctr", "cpm"],
+      limit: 20,
+    }),
+  ]);
+
+  return {
+    source,
+    window: datePreset,
+    summary: {
+      content: summarizeFacebookContent(posts),
+      campaigns: summarizeCampaignRows(campaignRows.data),
+    },
+    top_items: posts
+      .sort((left, right) => Number(right.post_impressions_unique ?? 0) - Number(left.post_impressions_unique ?? 0))
+      .slice(0, 5),
+  };
+}
+
+function summarizeFacebookContent(rows: Array<Record<string, unknown>>): Record<string, number> {
+  return {
+    posts: rows.length,
+    impressions_unique: rows.reduce((sum, row) => sum + Number(row.post_impressions_unique ?? 0), 0),
+    clicks: rows.reduce((sum, row) => sum + Number(row.post_clicks ?? 0), 0),
+    reactions_like: rows.reduce((sum, row) => sum + Number(row.post_reactions_like_total ?? 0), 0),
+    shares: rows.reduce((sum, row) => sum + Number(row.share_count ?? 0), 0),
+    video_views: rows.reduce((sum, row) => sum + Number(row.post_video_views ?? 0), 0),
+  };
+}
+
+function summarizeCampaignRows(rows: Array<Record<string, unknown>>): Record<string, number> {
+  return {
+    campaigns: rows.length,
+    spend: rows.reduce((sum, row) => sum + Number(row.spend ?? 0), 0),
+    impressions: rows.reduce((sum, row) => sum + Number(row.impressions ?? 0), 0),
+    reach: rows.reduce((sum, row) => sum + Number(row.reach ?? 0), 0),
+    clicks: rows.reduce((sum, row) => sum + Number(row.clicks ?? 0), 0),
+  };
+}
+
+function normalizeAdAccountId(value: string): string {
+  return value.startsWith("act_") ? value : `act_${value}`;
 }
 
 async function resolveAndCachePageId(

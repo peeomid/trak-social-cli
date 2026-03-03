@@ -4,26 +4,35 @@ Repo: `/Users/luannguyenthanh/Development/Osimify/trak-social-cli`
 
 ## What This Is
 
-Terminal CLI for:
-- Facebook Page discovery
-- Facebook Page post reads, rich insights, compare, and scheduling
-- personal Facebook post reads
-- Meta Ads insights
-- paused draft ad creation
-- JSON output for AI workflows like OpenClaw
+`trak` is a multi-source tracking CLI.
 
-CLI name:
-- `trak`
+Main public tree:
+- `source`
+- `account`
+- `content`
+- `campaign`
+- `report`
+- `publish`
+
+Provider trees:
+- `facebook`
+- `instagram`
+- `threads`
+- `ga`
+
+Current state:
+- Facebook implemented
+- Instagram/Threads/GA reserved, not implemented yet
 
 ## Quick Start
 
-Preferred setup:
 1. `trak config init --app-id 1493983742290842 --default-page 1548373332058326 --default-ad-account 1243158725700119`
 2. Edit `~/.config/trak/config.toml`
 3. `trak auth login`
-4. `trak auth status`
-5. `trak doctor`
-6. `trak doctor --live`
+4. `trak doctor --live`
+5. `trak account list --source facebook`
+6. `trak content list --source facebook --account sahaja --limit 5`
+7. `trak campaign stats --source facebook --account luan --date-preset last_7d`
 
 ## Important Paths
 
@@ -31,52 +40,47 @@ Preferred setup:
 - skill doc: `/Users/luannguyenthanh/Development/Osimify/trak-social-cli/skill/SKILL.md`
 - config example: `/Users/luannguyenthanh/Development/Osimify/trak-social-cli/examples/config.example.toml`
 
-Local runtime files:
+Runtime files:
 - `~/.config/trak/config.toml`
 - `~/.config/trak/tokens.json`
 
 ## Current Feature Set
 
 - `auth login|status|refresh|logout`
+- `source list|capabilities|status`
+- `account list|get|use`
+- `content list|get|stats|compare`
+- `campaign list|stats|get`
+- `campaign ad list`
+- `report daily|weekly|summary|top-content`
+- `publish preview|schedule`
 - `config init|show|set`
 - `config alias list|set|remove|rename`
-- `page list|resolve`
-- `page posts list|get|stats|insights|compare|schedule`
-- `user posts list|get`
-- `business list`
-- `business pages list`
-- `ads account list`
-- `ads campaigns list`
-- `ads insights` with filters:
-  - `--campaign-id`
-  - `--adset-id`
-  - `--ad-id`
-  - `--status`
-- `doctor --live` for Meta token / permission / Page / ads access checks
-- `ads create campaign|adset|creative|ad`
+- `doctor --live`
+- `facebook page ...`
+- `facebook user ...`
+- `facebook ads ...`
+- `facebook business ...`
 
 ## Safety / Conventions
 
-- Prefer file-based config over passing secrets on command line
-- Avoid `trak config set --app-secret ...` unless explicitly needed
-- Use `trak config alias ...` for named Page / ad account shortcuts
+- Prefer main task-first tree for common jobs
+- Use `facebook ...` tree for provider-only commands
+- Prefer file config over secrets on command line
+- Use aliases for Page and ad account shortcuts
 - Ad creation stays paused by default
-- Use `--json` for AI or automation workflows
-- Page post performance needs Meta `read_insights`
+- Use `--json` for AI workflows
+- Page performance needs Meta `read_insights`
 
 ## Verification
-
-Common checks:
 
 ```bash
 npm run build
 npm test
 trak --help
-trak auth status
-trak doctor
-trak doctor --live
-trak auth refresh
-trak page posts --help
-trak user posts --help
-trak ads insights --help
+trak source list
+trak account list --source facebook
+trak content stats --source facebook --account sahaja --limit 5
+trak facebook page posts --help
+trak facebook ads insights --help
 ```

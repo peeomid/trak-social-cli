@@ -1,4 +1,6 @@
 export type OutputFormat = "table" | "json";
+export type SupportedSource = "facebook" | "instagram" | "threads" | "ga";
+export type AccountKind = "page" | "ad_account" | "property" | "profile";
 
 export type MetaConfig = {
   defaultApiVersion: string;
