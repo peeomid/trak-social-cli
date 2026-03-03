@@ -730,6 +730,7 @@ function addReportCommands(program: Command): void {
     .option("--date-preset <preset>", "Date preset", "last_7d")
     .option("--status <status>", "Filter by effective status", "ACTIVE")
     .option("--limit <limit>", "Row limit", "20")
+    .option("--csv", "Print CSV instead of table/json")
     .description("Compare ad performance with source post content")
     .addHelpText(
       "after",
@@ -737,22 +738,25 @@ function addReportCommands(program: Command): void {
 Examples:
   trak report ad-content --source facebook --account luan
   trak report ad-content --source facebook --account luan --date-preset this_month
+  trak report ad-content --source facebook --account luan --date-preset this_month --csv
 `,
     )
     .action(async (options) => {
       const sourceName = resolveSource(options.source);
       assertImplementedSource(sourceName);
       const config = loadConfig();
-      render(
+      const rows = await buildFacebookAdContentReport(
         config,
-        await buildFacebookAdContentReport(
-          config,
-          resolveAdAccountRef(config, options.account),
-          options.datePreset,
-          options.status,
-          parsePositiveInteger(options.limit, "--limit"),
-        ),
+        resolveAdAccountRef(config, options.account),
+        options.datePreset,
+        options.status,
+        parsePositiveInteger(options.limit, "--limit"),
       );
+      if (options.csv) {
+        console.log(toCsv(rows));
+        return;
+      }
+      render(config, rows);
     });
 }
 
@@ -2336,6 +2340,47 @@ function truncateOutputMessage(message: string | null | undefined): string | nul
   return message.length > 140 ? `${message.slice(0, 137)}...` : message;
 }
 
+function scoreAdContentRow(row: Record<string, unknown>): number {
+  const adClicks = Number(row.clicks ?? 0);
+  const adCtr = Number(row.ctr ?? 0);
+  const adCpm = Number(row.cpm ?? 0);
+  const postClicks = Number(row.post_clicks ?? 0);
+  const postReach = Number(row.post_impressions_unique ?? 0);
+  const postReactions = Number(row.post_reactions_like_total ?? 0);
+  const score =
+    adClicks * 1 +
+    adCtr * 8 +
+    postClicks * 0.3 +
+    postReach * 0.02 +
+    postReactions * 0.5 -
+    adCpm / 10000;
+  return Math.round(score * 100) / 100;
+}
+
+function toCsv(rows: Array<Record<string, unknown>>): string {
+  if (rows.length === 0) {
+    return "";
+  }
+
+  const columns = [...new Set(rows.flatMap((row) => Object.keys(row).filter((key) => key !== "raw")))];
+  const lines = [
+    columns.join(","),
+    ...rows.map((row) => columns.map((column) => escapeCsvValue(row[column])).join(",")),
+  ];
+  return lines.join("\n");
+}
+
+function escapeCsvValue(value: unknown): string {
+  if (value === null || value === undefined) {
+    return "";
+  }
+  const text = typeof value === "object" ? JSON.stringify(value) : String(value);
+  if (text.includes(",") || text.includes("\"") || text.includes("\n")) {
+    return `"${text.replaceAll("\"", "\"\"")}"`;
+  }
+  return text;
+}
+
 async function listFacebookAccountsOutput(
   config: MetaConfig,
   tokenStore: ReturnType<typeof loadTokenStore>,
@@ -2459,7 +2504,7 @@ async function buildFacebookAdContentReport(
     limit,
   });
 
-  return Promise.all(
+  const rows = await Promise.all(
     response.data.map(async (row) => {
       const adId = typeof row.ad_id === "string" ? row.ad_id : "";
       const resolved = await resolveAdPost(config, tokenStore, secretStore, adId);
@@ -2497,6 +2542,8 @@ async function buildFacebookAdContentReport(
         post_clicks: postStats?.post_clicks ?? null,
         post_reactions_like_total: postStats?.post_reactions_like_total ?? null,
         post_video_views: postStats?.post_video_views ?? null,
+        score: 0,
+        rank: 0,
         message: process.argv.includes("--json") ? resolved.summary.message : undefined,
         raw: process.argv.includes("--json")
           ? {
@@ -2506,9 +2553,21 @@ async function buildFacebookAdContentReport(
               postStats,
             }
           : undefined,
-      };
+        };
     }),
   );
+
+  const ranked = rows
+    .map((row) => ({
+      ...row,
+      score: scoreAdContentRow(row),
+    }))
+    .sort((left, right) => Number(right.score ?? 0) - Number(left.score ?? 0));
+
+  return ranked.map((row, index) => ({
+    ...row,
+    rank: index + 1,
+  }));
 }
 
 function summarizeFacebookContent(rows: Array<Record<string, unknown>>): Record<string, number> {

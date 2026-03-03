@@ -118,6 +118,7 @@ trak report weekly --source facebook
 trak report summary --source facebook --account sahaja --from 2026-03-01 --to 2026-03-03
 trak report top-content --source facebook --account sahaja --limit 5
 trak report ad-content --source facebook --account luan --date-preset this_month
+trak report ad-content --source facebook --account luan --date-preset this_month --csv
 ```
 
 ### Publish
